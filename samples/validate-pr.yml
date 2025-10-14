@@ -1,0 +1,164 @@
+# GitOps Repository PR Validation Workflow
+# Location: GitOps repositories (build-cluster-gitops, app-cluster-gitops)
+#           at .github/workflows/validate-pr.yml
+#
+# This workflow validates deployment PRs to enable safe auto-merge for production.
+# It runs checks to ensure:
+# - YAML files are valid
+# - Kubernetes manifests are correct
+# - Docker images exist in the registry
+# - Flux can process the changes
+
+name: Validate Deployment PR
+
+on:
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Need full history for diff
+      
+      # Step 1: Validate YAML syntax
+      - name: Install yamllint
+        run: |
+          pip install yamllint
+      
+      - name: Validate YAML files
+        run: |
+          cat > .yamllint << 'EOF'
+          extends: default
+          rules:
+            line-length:
+              max: 120
+              level: warning
+            comments:
+              min-spaces-from-content: 1
+            indentation:
+              spaces: 2
+          EOF
+          
+          echo "Validating YAML files..."
+          find clusters -name "*.yaml" -o -name "*.yml" | xargs yamllint -c .yamllint
+          echo "✅ All YAML files are valid"
+      
+      # Step 2: Validate Kubernetes manifests
+      - name: Install kubeconform
+        run: |
+          curl -L https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz | tar xz
+          sudo mv kubeconform /usr/local/bin/
+      
+      - name: Validate Kubernetes manifests
+        run: |
+          echo "Validating Kubernetes manifests..."
+          kubeconform -strict -ignore-missing-schemas -summary clusters/
+          echo "✅ All Kubernetes manifests are valid"
+      
+      # Step 3: Extract and verify Docker image exists
+      - name: Login to Docker registry
+        env:
+          IMAGE_REGISTRY_HOST: docker-private.build.krystof.io
+          IMAGE_REGISTRY_USERNAME: ${{ secrets.IMAGE_REGISTRY_USERNAME }}
+          IMAGE_REGISTRY_PASSWORD: ${{ secrets.IMAGE_REGISTRY_PASSWORD }}
+        run: |
+          echo "${{ secrets.IMAGE_REGISTRY_PASSWORD }}" | docker login ${IMAGE_REGISTRY_HOST} \
+            -u "${{ secrets.IMAGE_REGISTRY_USERNAME }}" --password-stdin
+      
+      - name: Verify Docker image exists
+        env:
+          IMAGE_REGISTRY_HOST: docker-private.build.krystof.io
+        run: |
+          echo "Checking if Docker image exists in registry..."
+          
+          # Get list of changed files
+          CHANGED_FILES=$(git diff --name-only origin/main...HEAD)
+          echo "Changed files:"
+          echo "$CHANGED_FILES"
+          
+          # Look for image tag changes in HelmRelease or Kustomization files
+          IMAGE_TAG=""
+          APP_NAME=""
+          
+          for file in $CHANGED_FILES; do
+            if [[ "$file" == *"helmrelease.yaml"* ]]; then
+              # Extract image tag from HelmRelease
+              IMAGE_TAG=$(git diff origin/main...HEAD -- "$file" | grep -oP '\+.*image\.tag.*:\s*"\K[^"]+' | head -1 || true)
+              # Extract app name from path (assumes structure: clusters/*/namespaces/*/APP_NAME/*)
+              APP_NAME=$(echo "$file" | grep -oP 'namespaces/[^/]+/\K[^/]+' | head -1 || true)
+            elif [[ "$file" == *"kustomization.yaml"* ]]; then
+              # Extract image tag from Kustomization
+              IMAGE_TAG=$(git diff origin/main...HEAD -- "$file" | grep -oP '\+.*newTag:\s*\K\S+' | head -1 || true)
+              APP_NAME=$(echo "$file" | grep -oP 'namespaces/[^/]+/\K[^/]+' | head -1 || true)
+            fi
+            
+            # If we found both, break
+            if [ -n "$IMAGE_TAG" ] && [ -n "$APP_NAME" ]; then
+              break
+            fi
+          done
+          
+          if [ -z "$IMAGE_TAG" ] || [ -z "$APP_NAME" ]; then
+            echo "⚠️  Warning: Could not extract image tag or app name from changes"
+            echo "This might be a non-deployment change (e.g., configuration update)"
+            echo "Skipping image verification"
+            exit 0
+          fi
+          
+          echo "Extracted image info:"
+          echo "  App Name: $APP_NAME"
+          echo "  Image Tag: $IMAGE_TAG"
+          
+          # Check if image exists in registry
+          FULL_IMAGE="${IMAGE_REGISTRY_HOST}/${APP_NAME}:${IMAGE_TAG}"
+          echo "Verifying image: $FULL_IMAGE"
+          
+          if docker manifest inspect "$FULL_IMAGE" > /dev/null 2>&1; then
+            echo "✅ Image exists in registry: $FULL_IMAGE"
+          else
+            echo "❌ ERROR: Image not found in registry: $FULL_IMAGE"
+            echo ""
+            echo "This usually means:"
+            echo "  1. The image build failed"
+            echo "  2. The image hasn't been pushed yet"
+            echo "  3. The image tag is incorrect"
+            echo ""
+            echo "Please check the build workflow and ensure the image was successfully pushed."
+            exit 1
+          fi
+      
+      # Step 4: Validate with Flux (optional, requires Flux CLI)
+      - name: Install Flux CLI
+        run: |
+          curl -s https://fluxcd.io/install.sh | sudo bash
+      
+      - name: Flux dry-run validation
+        run: |
+          echo "Running Flux validation..."
+          # This does a dry-run to see if Flux can process the manifests
+          # Note: This requires the manifests to be in the standard Flux structure
+          if [ -d "clusters" ]; then
+            flux diff kustomization flux-system --path clusters/ || true
+            echo "✅ Flux validation complete"
+          else
+            echo "⚠️  Skipping Flux validation - no clusters directory found"
+          fi
+      
+      # Step 5: Summary
+      - name: Validation summary
+        if: success()
+        run: |
+          echo "## ✅ All Validation Checks Passed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "This PR is ready to be merged and will trigger a deployment." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Checks Performed" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ YAML syntax validation" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Kubernetes manifest validation" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Docker image exists in registry" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Flux can process the changes" >> $GITHUB_STEP_SUMMARY

@@ -1,0 +1,54 @@
+# Example CI/CD workflow for a Spring Boot application
+# Location: Application repository at .github/workflows/ci-cd.yml
+#
+# This is the ONLY workflow file needed in your application repository.
+# All the build/test/deploy logic is handled by the shared workflow.
+
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+      - 'feature/**'
+      - 'feat/**'
+      - 'bugfix/**'
+      - 'fix/**'
+    tags:
+      - 'v*'
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build-and-deploy:
+    # Call the shared workflow for Java applications
+    uses: krystof-io/github-workflows/.github/workflows/java-app-build.yml@main
+    with:
+      # Required: Application name
+      app_name: my-service
+      
+      # Optional: Customize as needed (these show non-default values)
+      # java_version: '21'                    # Default: '17'
+      # target_clusters: '["build", "app"]'   # Default: '["app"]'
+      # heap_size: '2g'                       # Default: '512m'
+      # maven_profiles: 'prod,extra'          # Default: ''
+      
+    secrets:
+      IMAGE_REGISTRY_USERNAME: ${{ secrets.IMAGE_REGISTRY_USERNAME }}
+      IMAGE_REGISTRY_PASSWORD: ${{ secrets.IMAGE_REGISTRY_PASSWORD }}
+      MAVEN_REPO_USERNAME: ${{ secrets.MAVEN_REPO_USERNAME }}
+      MAVEN_REPO_PASSWORD: ${{ secrets.MAVEN_REPO_PASSWORD }}
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+      CICD_TOKEN: ${{ secrets.CICD_TOKEN }}
+      CICD_USER_EMAIL: ${{ secrets.CICD_USER_EMAIL }}
+      CICD_USER_NAME: ${{ secrets.CICD_USER_NAME }}
+
+# That's it! The shared workflow handles:
+# - Building and testing your application
+# - Running integration tests (on main branch)
+# - Running SonarQube analysis (on main branch)
+# - Building Docker image with shared Dockerfile
+# - Deploying to dev environment (feature branches and main)
+# - Creating deployment PRs for prod (tags)

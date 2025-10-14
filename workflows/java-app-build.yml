@@ -1,0 +1,547 @@
+# Reusable workflow for building and deploying Java Spring Boot applications
+# Location: github-workflows repo at .github/workflows/java-app-build.yml
+
+name: Java App Build and Deploy
+
+on:
+  workflow_call:
+    inputs:
+      app_name:
+        required: true
+        type: string
+        description: 'Name of the application'
+      java_version:
+        default: '21'
+        type: string
+        description: 'Java version to use'
+      maven_profiles:
+        default: ''
+        type: string
+        description: 'Maven profiles to activate (comma-separated)'
+      target_clusters:
+        default: '["build"]'
+        type: string
+        description: 'JSON array of target clusters'
+      dockerfile_repo:
+        default: 'krystof-io/devops-templates'
+        type: string
+        description: 'Repository containing shared Dockerfiles'
+      dockerfile_path:
+        default: 'Dockerfiles/java/spring-boot/Dockerfile'
+        type: string
+        description: 'Path to Dockerfile within dockerfile_repo'
+      base_docker_image:
+        default: 'eclipse-temurin:21-jre-alpine'
+        type: string
+        description: 'Base image for Docker build'
+      heap_size:
+        default: '512m'
+        type: string
+        description: 'JVM heap size'
+    secrets:
+      IMAGE_REGISTRY_USERNAME:
+        required: true
+      IMAGE_REGISTRY_PASSWORD:
+        required: true
+      MAVEN_REPO_USERNAME:
+        required: true
+      MAVEN_REPO_PASSWORD:
+        required: true
+      # SONAR_TOKEN:
+      #   required: false
+      # SONAR_HOST_URL:
+      #   required: false
+      CICD_TOKEN:
+        required: true
+      CICD_USER_EMAIL:
+        required: true
+      CICD_USER_NAME:
+        required: true
+
+jobs:
+  # Parse cluster configuration and setup matrix
+  setup:
+    runs-on: arc-runners-javadev
+    outputs:
+      clusters_matrix: ${{ steps.parse.outputs.matrix }}
+      version: ${{ steps.version.outputs.version }}
+      image_tag: ${{ steps.version.outputs.image_tag }}
+      is_release: ${{ steps.version.outputs.is_release }}
+    steps:
+      - name: Checkout workflow repo
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 #v5
+        with:
+          repository: krystof-io/github-workflows
+          path: workflow-config
+      
+      - name: Parse target clusters
+        id: parse
+        run: |
+          cd workflow-config
+          # Read cluster config
+          CLUSTERS_CONFIG=$(cat config/clusters.yml | yq -o json)
+          
+          # Parse input clusters
+          TARGET_CLUSTERS='${{ inputs.target_clusters }}'
+          
+          # Build matrix with GitOps repo for each cluster
+          MATRIX=$(echo $TARGET_CLUSTERS | jq -c --argjson config "$CLUSTERS_CONFIG" '
+            map({
+              name: .,
+              gitops_repo: $config.clusters[.].gitops_repo,
+              cluster_path: $config.clusters[.].cluster_path
+            })
+          ')
+          echo "matrix={\"include\":$MATRIX}" >> $GITHUB_OUTPUT
+      
+      - name: Calculate version and image tag
+        id: version
+        run: |
+          # Extract version from pom.xml
+          VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout || echo "unknown")
+          SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
+          
+          # Determine if this is a release (tag starting with 'v')
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            IS_RELEASE="true"
+            # For releases, use clean version (no SNAPSHOT)
+            IMAGE_TAG="${VERSION}"
+          elif [[ "${{ github.ref }}" == refs/heads/main ]]; then
+            IS_RELEASE="false"
+            # For main branch
+            IMAGE_TAG="${VERSION}-${SHORT_SHA}"
+          else
+            IS_RELEASE="false"
+            # For feature branches
+            BRANCH_NAME=$(echo ${{ github.ref }} | sed 's|refs/heads/||' | sed 's/[^a-zA-Z0-9]/-/g')
+            IMAGE_TAG="${VERSION}-${BRANCH_NAME}-${SHORT_SHA}"
+          fi
+          
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "image_tag=${IMAGE_TAG}" >> $GITHUB_OUTPUT
+          echo "is_release=${IS_RELEASE}" >> $GITHUB_OUTPUT
+          
+          echo "Version: ${VERSION}"
+          echo "Image Tag: ${IMAGE_TAG}"
+          echo "Is Release: ${IS_RELEASE}"
+
+#   # Build and run unit tests
+#   build-and-test:
+#     runs-on: arc-runners-javadev
+#     needs: setup
+#     steps:
+#       - name: Checkout code
+#         uses: actions/checkout@v4
+      
+#       - name: Set up JDK
+#         uses: actions/setup-java@v4
+#         with:
+#           java-version: ${{ inputs.java_version }}
+#           distribution: 'temurin'
+#           cache: 'maven'
+      
+#       - name: Configure Maven settings
+#         run: |
+#           mkdir -p ~/.m2
+#           cat > ~/.m2/settings.xml << 'EOF'
+#           <settings>
+#             <servers>
+#               <server>
+#                 <id>maven-releases</id>
+#                 <username>${env.MAVEN_REPO_USERNAME}</username>
+#                 <password>${env.MAVEN_REPO_PASSWORD}</password>
+#               </server>
+#               <server>
+#                 <id>maven-snapshots</id>
+#                 <username>${env.MAVEN_REPO_USERNAME}</username>
+#                 <password>${env.MAVEN_REPO_PASSWORD}</password>
+#               </server>
+#             </servers>
+#             <mirrors>
+#               <mirror>
+#                 <id>maven-public</id>
+#                 <mirrorOf>*</mirrorOf>
+#                 <url>${env.MAVEN_REPO_URL}</url>
+#               </mirror>
+#             </mirrors>
+#           </settings>
+#           EOF
+#         env:
+#           MAVEN_REPO_USERNAME: ${{ secrets.MAVEN_REPO_USERNAME }}
+#           MAVEN_REPO_PASSWORD: ${{ secrets.MAVEN_REPO_PASSWORD }}
+      
+#       - name: Build and run unit tests
+#         run: |
+#           PROFILES=""
+#           if [ -n "${{ inputs.maven_profiles }}" ]; then
+#             PROFILES="-P${{ inputs.maven_profiles }}"
+#           fi
+#           mvn clean verify ${PROFILES}
+#         env:
+#           MAVEN_REPO_USERNAME: ${{ secrets.MAVEN_REPO_USERNAME }}
+#           MAVEN_REPO_PASSWORD: ${{ secrets.MAVEN_REPO_PASSWORD }}
+      
+#       - name: Upload test results
+#         if: always()
+#         uses: actions/upload-artifact@v4
+#         with:
+#           name: test-results
+#           path: |
+#             **/target/surefire-reports/
+#             **/target/failsafe-reports/
+#           retention-days: 7
+
+#   # Run integration tests (only on main branch)
+#   integration-test:
+#     runs-on: arc-runners-javadev
+#     needs: [setup, build-and-test]
+#     if: github.ref == 'refs/heads/main'
+#     steps:
+#       - name: Checkout code
+#         uses: actions/checkout@v4
+      
+#       - name: Set up JDK
+#         uses: actions/setup-java@v4
+#         with:
+#           java-version: ${{ inputs.java_version }}
+#           distribution: 'temurin'
+#           cache: 'maven'
+      
+#       - name: Configure Maven settings
+#         run: |
+#           mkdir -p ~/.m2
+#           cat > ~/.m2/settings.xml << 'EOF'
+#           <settings>
+#             <servers>
+#               <server>
+#                 <id>maven-releases</id>
+#                 <username>${env.MAVEN_REPO_USERNAME}</username>
+#                 <password>${env.MAVEN_REPO_PASSWORD}</password>
+#               </server>
+#               <server>
+#                 <id>maven-snapshots</id>
+#                 <username>${env.MAVEN_REPO_USERNAME}</username>
+#                 <password>${env.MAVEN_REPO_PASSWORD}</password>
+#               </server>
+#             </servers>
+#             <mirrors>
+#               <mirror>
+#                 <id>maven-public</id>
+#                 <mirrorOf>*</mirrorOf>
+#                 <url>${env.MAVEN_REPO_URL}</url>
+#               </mirror>
+#             </mirrors>
+#           </settings>
+#           EOF
+#         env:
+#           MAVEN_REPO_USERNAME: ${{ secrets.MAVEN_REPO_USERNAME }}
+#           MAVEN_REPO_PASSWORD: ${{ secrets.MAVEN_REPO_PASSWORD }}
+      
+#       - name: Run integration tests
+#         run: |
+#           mvn verify -P integration-tests
+#         env:
+#           MAVEN_REPO_USERNAME: ${{ secrets.MAVEN_REPO_USERNAME }}
+#           MAVEN_REPO_PASSWORD: ${{ secrets.MAVEN_REPO_PASSWORD }}
+
+#   # # Run Sonar scan (only on main branch)
+#   # sonar-scan:
+#   #   runs-on: arc-runners-javadev
+#   #   needs: [setup, build-and-test]
+#   #   if: github.ref == 'refs/heads/main' && secrets.SONAR_TOKEN != ''
+#   #   steps:
+#   #     - name: Checkout code
+#   #       uses: actions/checkout@v4
+#   #       with:
+#   #         fetch-depth: 0  # Shallow clones disabled for better analysis
+      
+#   #     - name: Set up JDK
+#   #       uses: actions/setup-java@v4
+#   #       with:
+#   #         java-version: ${{ inputs.java_version }}
+#   #         distribution: 'temurin'
+#   #         cache: 'maven'
+      
+#   #     - name: Configure Maven settings
+#   #       run: |
+#   #         mkdir -p ~/.m2
+#   #         cat > ~/.m2/settings.xml << 'EOF'
+#   #         <settings>
+#   #           <servers>
+#   #             <server>
+#   #               <id>maven-releases</id>
+#   #               <username>${env.MAVEN_REPO_USERNAME}</username>
+#   #               <password>${env.MAVEN_REPO_PASSWORD}</password>
+#   #             </server>
+#   #             <server>
+#   #               <id>maven-snapshots</id>
+#   #               <username>${env.MAVEN_REPO_USERNAME}</username>
+#   #               <password>${env.MAVEN_REPO_PASSWORD}</password>
+#   #             </server>
+#   #           </servers>
+#   #           <mirrors>
+#   #             <mirror>
+#   #               <id>maven-public</id>
+#   #               <mirrorOf>*</mirrorOf>
+#   #               <url>${env.MAVEN_REPO_URL}</url>
+#   #             </mirror>
+#   #           </mirrors>
+#   #         </settings>
+#   #         EOF
+#   #       env:
+#   #         MAVEN_REPO_USERNAME: ${{ secrets.MAVEN_REPO_USERNAME }}
+#   #         MAVEN_REPO_PASSWORD: ${{ secrets.MAVEN_REPO_PASSWORD }}
+      
+#   #     - name: Run Sonar analysis
+#   #       run: |
+#   #         mvn sonar:sonar \
+#   #           -Dsonar.projectKey=${{ inputs.app_name }} \
+#   #           -Dsonar.host.url=${{ secrets.SONAR_HOST_URL }} \
+#   #           -Dsonar.login=${{ secrets.SONAR_TOKEN }}
+#   #       env:
+#   #         MAVEN_REPO_USERNAME: ${{ secrets.MAVEN_REPO_USERNAME }}
+#   #         MAVEN_REPO_PASSWORD: ${{ secrets.MAVEN_REPO_PASSWORD }}
+
+#   # Build Docker image
+#   build-docker-image:
+#     runs-on: arc-runners-javadev
+#     needs: [setup, build-and-test]
+#     steps:
+#       - name: Checkout code
+#         uses: actions/checkout@v4
+      
+#       - name: Checkout Dockerfile repo
+#         uses: actions/checkout@v4
+#         with:
+#           repository: ${{ inputs.dockerfile_repo }}
+#           path: docker-templates
+#           token: ${{ secrets.CICD_TOKEN }}
+      
+#       - name: Set up JDK
+#         uses: actions/setup-java@v4
+#         with:
+#           java-version: ${{ inputs.java_version }}
+#           distribution: 'temurin'
+#           cache: 'maven'
+      
+#       - name: Configure Maven settings
+#         run: |
+#           mkdir -p ~/.m2
+#           cat > ~/.m2/settings.xml << 'EOF'
+#           <settings>
+#             <servers>
+#               <server>
+#                 <id>maven-releases</id>
+#                 <username>${env.MAVEN_REPO_USERNAME}</username>
+#                 <password>${env.MAVEN_REPO_PASSWORD}</password>
+#               </server>
+#               <server>
+#                 <id>maven-snapshots</id>
+#                 <username>${env.MAVEN_REPO_USERNAME}</username>
+#                 <password>${env.MAVEN_REPO_PASSWORD}</password>
+#               </server>
+#             </servers>
+#             <mirrors>
+#               <mirror>
+#                 <id>maven-public</id>
+#                 <mirrorOf>*</mirrorOf>
+#                 <url>${env.MAVEN_REPO_URL}</url>
+#               </mirror>
+#             </mirrors>
+#           </settings>
+#           EOF
+#         env:
+#           MAVEN_REPO_USERNAME: ${{ secrets.MAVEN_REPO_USERNAME }}
+#           MAVEN_REPO_PASSWORD: ${{ secrets.MAVEN_REPO_PASSWORD }}
+      
+#       - name: Package application
+#         run: |
+#           PROFILES=""
+#           if [ -n "${{ inputs.maven_profiles }}" ]; then
+#             PROFILES="-P${{ inputs.maven_profiles }}"
+#           fi
+#           mvn package -DskipTests ${PROFILES}
+#         env:
+#           MAVEN_REPO_USERNAME: ${{ secrets.MAVEN_REPO_USERNAME }}
+#           MAVEN_REPO_PASSWORD: ${{ secrets.MAVEN_REPO_PASSWORD }}
+      
+#       - name: Find JAR file
+#         id: find_jar
+#         run: |
+#           JAR_FILE=$(find target -name "*.jar" -not -name "*-sources.jar" -not -name "*-javadoc.jar" | head -1)
+#           echo "jar_file=${JAR_FILE}" >> $GITHUB_OUTPUT
+#           echo "Found JAR: ${JAR_FILE}"
+      
+#       - name: Login to Docker registry
+#         run: |
+#           echo "${{ secrets.IMAGE_REGISTRY_PASSWORD }}" | docker login ${{ env.IMAGE_REGISTRY_HOST }} \
+#             -u "${{ secrets.IMAGE_REGISTRY_USERNAME }}" --password-stdin
+      
+#       - name: Build and push Docker image
+#         run: |
+#           IMAGE_NAME="${{ env.IMAGE_REGISTRY_HOST }}/${{ inputs.app_name }}:${{ needs.setup.outputs.image_tag }}"
+          
+#           docker build \
+#             -f docker-templates/${{ inputs.dockerfile_path }} \
+#             --build-arg BASE_IMAGE=${{ inputs.base_docker_image }} \
+#             --build-arg JAR_FILE=${{ steps.find_jar.outputs.jar_file }} \
+#             --build-arg HEAP_SIZE=${{ inputs.heap_size }} \
+#             --build-arg APP_NAME=${{ inputs.app_name }} \
+#             -t "${IMAGE_NAME}" \
+#             .
+          
+#           docker push "${IMAGE_NAME}"
+#           echo "Pushed image: ${IMAGE_NAME}"
+
+#   # Deploy to dev environment (direct commit)
+#   deploy-dev:
+#     runs-on: arc-runners-javadev
+#     needs: [setup, build-docker-image]
+#     if: github.ref != 'refs/tags/v*'
+#     strategy:
+#       matrix: ${{ fromJson(needs.setup.outputs.clusters_matrix) }}
+#     steps:
+#       - name: Install dependencies
+#         run: |
+#           # Ensure yq is available
+#           if ! command -v yq &> /dev/null; then
+#             sudo wget https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/bin/yq
+#             sudo chmod +x /usr/bin/yq
+#           fi
+      
+#       - name: Update GitOps repo
+#         run: |
+#           set -e
+          
+#           GITOPS_REPO="${{ matrix.gitops_repo }}"
+#           APP_NAME="${{ inputs.app_name }}"
+#           NAMESPACE="kio-dev"
+#           IMAGE_TAG="${{ needs.setup.outputs.image_tag }}"
+#           CLUSTER_PATH="${{ matrix.cluster_path }}"
+          
+#           # Clone GitOps repo
+#           git clone https://x-access-token:${{ secrets.CICD_TOKEN }}@github.com/${GITOPS_REPO}.git gitops
+#           cd gitops
+          
+#           # Update image tag
+#           APP_PATH="clusters/${CLUSTER_PATH}/namespaces/${NAMESPACE}/${APP_NAME}"
+          
+#           if [ -f "${APP_PATH}/helmrelease.yaml" ]; then
+#             # Update Helm release
+#             yq eval ".spec.values.image.tag = \"${IMAGE_TAG}\"" -i "${APP_PATH}/helmrelease.yaml"
+#             echo "Updated HelmRelease at ${APP_PATH}/helmrelease.yaml"
+#           elif [ -f "${APP_PATH}/kustomization.yaml" ]; then
+#             # Update Kustomization
+#             cd "${APP_PATH}"
+#             kustomize edit set image "${APP_NAME}=${{ env.IMAGE_REGISTRY_HOST }}/${APP_NAME}:${IMAGE_TAG}"
+#             echo "Updated Kustomization at ${APP_PATH}/kustomization.yaml"
+#             cd -
+#           else
+#             echo "ERROR: No helmrelease.yaml or kustomization.yaml found at ${APP_PATH}"
+#             exit 1
+#           fi
+          
+#           # Commit and push
+#           git config user.name "${{ secrets.CICD_USER_NAME }}"
+#           git config user.email "${{ secrets.CICD_USER_EMAIL }}"
+#           git add .
+#           git commit -m "Deploy ${APP_NAME} ${IMAGE_TAG} to ${NAMESPACE} on ${{ matrix.name }} cluster"
+#           git push origin main
+          
+#           echo "✅ Successfully deployed to ${{ matrix.name }} cluster (dev)"
+
+#   # Deploy to prod environment (create PR with auto-merge)
+#   deploy-prod:
+#     runs-on: arc-runners-javadev
+#     needs: [setup, build-docker-image]
+#     if: startsWith(github.ref, 'refs/tags/v')
+#     strategy:
+#       matrix: ${{ fromJson(needs.setup.outputs.clusters_matrix) }}
+#     steps:
+#       - name: Validate version is not SNAPSHOT
+#         run: |
+#           VERSION="${{ needs.setup.outputs.version }}"
+#           if [[ "${VERSION}" == *"SNAPSHOT"* ]]; then
+#             echo "ERROR: Cannot deploy SNAPSHOT version to production"
+#             exit 1
+#           fi
+#           echo "✅ Version ${VERSION} is valid for production"
+      
+#       - name: Install dependencies
+#         run: |
+#           # Ensure yq and gh are available
+#           if ! command -v yq &> /dev/null; then
+#             sudo wget https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/bin/yq
+#             sudo chmod +x /usr/bin/yq
+#           fi
+#           if ! command -v gh &> /dev/null; then
+#             curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+#             echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
+#             sudo apt update
+#             sudo apt install gh -y
+#           fi
+      
+#       - name: Create GitOps PR
+#         run: |
+#           set -e
+          
+#           GITOPS_REPO="${{ matrix.gitops_repo }}"
+#           APP_NAME="${{ inputs.app_name }}"
+#           NAMESPACE="kio-prod"
+#           IMAGE_TAG="${{ needs.setup.outputs.image_tag }}"
+#           CLUSTER_PATH="${{ matrix.cluster_path }}"
+#           VERSION="${{ needs.setup.outputs.version }}"
+#           CLUSTER_NAME="${{ matrix.name }}"
+          
+#           # Clone GitOps repo
+#           git clone https://x-access-token:${{ secrets.CICD_TOKEN }}@github.com/${GITOPS_REPO}.git gitops
+#           cd gitops
+          
+#           # Create feature branch
+#           BRANCH_NAME="deploy/${APP_NAME}/${VERSION}-${CLUSTER_NAME}"
+#           git checkout -b "${BRANCH_NAME}"
+          
+#           # Update image tag
+#           APP_PATH="clusters/${CLUSTER_PATH}/namespaces/${NAMESPACE}/${APP_NAME}"
+          
+#           if [ -f "${APP_PATH}/helmrelease.yaml" ]; then
+#             yq eval ".spec.values.image.tag = \"${IMAGE_TAG}\"" -i "${APP_PATH}/helmrelease.yaml"
+#             echo "Updated HelmRelease at ${APP_PATH}/helmrelease.yaml"
+#           elif [ -f "${APP_PATH}/kustomization.yaml" ]; then
+#             cd "${APP_PATH}"
+#             kustomize edit set image "${APP_NAME}=${{ env.IMAGE_REGISTRY_HOST }}/${APP_NAME}:${IMAGE_TAG}"
+#             echo "Updated Kustomization at ${APP_PATH}/kustomization.yaml"
+#             cd -
+#           else
+#             echo "ERROR: No helmrelease.yaml or kustomization.yaml found at ${APP_PATH}"
+#             exit 1
+#           fi
+          
+#           # Commit and push branch
+#           git config user.name "${{ secrets.CICD_USER_NAME }}"
+#           git config user.email "${{ secrets.CICD_USER_EMAIL }}"
+#           git add .
+#           git commit -m "Deploy ${APP_NAME} ${VERSION} to ${NAMESPACE} on ${CLUSTER_NAME}"
+#           git push origin "${BRANCH_NAME}"
+          
+#           # Create Pull Request using GitHub CLI
+#           export GITHUB_TOKEN="${{ secrets.CICD_TOKEN }}"
+#           gh pr create \
+#             --repo "${GITOPS_REPO}" \
+#             --title "Deploy ${APP_NAME} ${VERSION} to production (${CLUSTER_NAME} cluster)" \
+#             --body "Automated deployment PR for ${APP_NAME} version ${VERSION}
+
+# **Cluster**: ${CLUSTER_NAME}
+# **Image**: \`${{ env.IMAGE_REGISTRY_HOST }}/${APP_NAME}:${IMAGE_TAG}\`
+# **Target**: ${NAMESPACE} namespace in ${CLUSTER_PATH}
+# **Triggered by**: Tag push in ${APP_NAME} repository
+# **Tag**: ${{ github.ref }}
+
+# This PR will auto-merge once all required checks pass." \
+#             --base main \
+#             --head "${BRANCH_NAME}"
+          
+#           # Enable auto-merge
+#           gh pr merge "${BRANCH_NAME}" --repo "${GITOPS_REPO}" --auto --squash
+          
+#           echo "✅ Created PR for ${{ matrix.name }} cluster (prod) with auto-merge enabled"
