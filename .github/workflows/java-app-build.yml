@@ -152,6 +152,25 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 #v5
       
+      - name: Initialize Maven settings
+        uses: s4u/maven-settings-action@v3.1.0
+        with:
+          servers: |
+            [
+            {"id": "private-snapshots", "username": "${{ env.MAVEN_REPO_USERNAME }}", "password": "${{ env.MAVEN_REPO_PASSWORD }}"},
+            {"id": "private-releases", "username": "${{ env.MAVEN_REPO_USERNAME }}", "password": "${{ env.MAVEN_REPO_PASSWORD }}"},
+            {"id": "nexus", "username": "${{ env.MAVEN_REPO_USERNAME }}", "password": "${{ env.MAVEN_REPO_PASSWORD }}"}
+            ]
+          mirrors: |
+            [
+            {"id": "nexus", "name":"nexus", "mirrorOf":"*", "url":"${{ env.MAVEN_REPO_URL }}"}
+            ]
+          sonatypeSnapshots: true          
+        env:
+          MAVEN_REPO_USERNAME: ${{ secrets.MAVEN_REPO_USERNAME }}
+          MAVEN_REPO_PASSWORD: ${{ secrets.MAVEN_REPO_PASSWORD }}
+          MAVEN_REPO_URL: ${{ vars.MAVEN_REPO_URL }}       
+                  
       - name: Build and run unit tests
         run: |
           PROFILES=""
