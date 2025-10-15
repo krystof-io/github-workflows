@@ -216,7 +216,7 @@ jobs:
       
       - name: Build and push Docker image
         run: |
-          IMAGE_NAME="${{ env.IMAGE_REGISTRY_HOST }}/${{ inputs.app_name }}:${{ needs.build.outputs.image_tag }}"
+          IMAGE_NAME="${{ vars.IMAGE_REGISTRY_HOST }}/${{ inputs.app_name }}:${{ needs.build.outputs.image_tag }}"
           
           docker build \
             -f docker-templates/${{ inputs.dockerfile_path }} \
