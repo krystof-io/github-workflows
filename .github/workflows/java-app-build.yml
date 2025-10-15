@@ -68,6 +68,10 @@ jobs:
       image_tag: ${{ steps.version.outputs.image_tag }}
       is_release: ${{ steps.version.outputs.is_release }}
     steps:
+
+      - name: Checkout code
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 #v5
+        
       - name: Checkout workflow repo
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 #v5
         with:
@@ -117,6 +121,7 @@ jobs:
         id: version
         run: |
           # Extract version from pom.xml
+          mvn help:evaluate -Dexpression=project.version 
           VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout || echo "unknown")
           SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
           
@@ -170,7 +175,7 @@ jobs:
           MAVEN_REPO_USERNAME: ${{ secrets.MAVEN_REPO_USERNAME }}
           MAVEN_REPO_PASSWORD: ${{ secrets.MAVEN_REPO_PASSWORD }}
           MAVEN_REPO_URL: ${{ vars.MAVEN_REPO_URL }}       
-                  
+
       - name: Build and run unit tests
         run: |
           PROFILES=""
