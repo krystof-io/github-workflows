@@ -60,7 +60,7 @@ on:
 
 jobs:
   # Parse cluster configuration and setup matrix
-  setup:
+  build:
     runs-on: arc-runners-javadev
     outputs:
       clusters_matrix: ${{ steps.parse.outputs.matrix }}
@@ -117,11 +117,18 @@ jobs:
           MAVEN_REPO_PASSWORD: ${{ secrets.MAVEN_REPO_PASSWORD }}
           MAVEN_REPO_URL: ${{ vars.MAVEN_REPO_URL }}          
 
+      - name: Build and run tests
+        run: |
+          PROFILES=""
+          if [ -n "${{ inputs.maven_profiles }}" ]; then
+            PROFILES="-P${{ inputs.maven_profiles }}"
+          fi
+          mvn clean verify ${PROFILES}
+
       - name: Calculate version and image tag
         id: version
         run: |
           # Extract version from pom.xml
-          mvn help:evaluate -Dexpression=project.version 
           VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout || echo "unknown")
           SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
           
@@ -149,14 +156,20 @@ jobs:
           echo "Image Tag: ${IMAGE_TAG}"
           echo "Is Release: ${IS_RELEASE}"
 
-  # Build and run unit tests
-  build-and-test:
+  # Build Docker image
+  build-docker-image:
     runs-on: arc-runners-javadev
-    needs: setup
+    needs: [build]
     steps:
       - name: Checkout code
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 #v5
-      
+        
+      - name: Checkout workflow repo
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 #v5
+        with:
+          repository: ${{ inputs.dockerfile_repo }}
+          path: workflow-config          
+
       - name: Initialize Maven settings
         uses: s4u/maven-settings-action@v3.1.0
         with:
@@ -174,15 +187,83 @@ jobs:
         env:
           MAVEN_REPO_USERNAME: ${{ secrets.MAVEN_REPO_USERNAME }}
           MAVEN_REPO_PASSWORD: ${{ secrets.MAVEN_REPO_PASSWORD }}
-          MAVEN_REPO_URL: ${{ vars.MAVEN_REPO_URL }}       
+          MAVEN_REPO_URL: ${{ vars.MAVEN_REPO_URL }}   
 
-      - name: Build and run unit tests
+      - name: Package application
         run: |
           PROFILES=""
           if [ -n "${{ inputs.maven_profiles }}" ]; then
             PROFILES="-P${{ inputs.maven_profiles }}"
           fi
-          mvn clean verify ${PROFILES}
+          mvn package -DskipTests ${PROFILES}
+        env:
+          MAVEN_REPO_USERNAME: ${{ secrets.MAVEN_REPO_USERNAME }}
+          MAVEN_REPO_PASSWORD: ${{ secrets.MAVEN_REPO_PASSWORD }}
+      
+      - name: Find JAR file
+        id: find_jar
+        run: |
+          JAR_FILE=$(find target -name "*.jar" -not -name "*-sources.jar" -not -name "*-javadoc.jar" | head -1)
+          echo "jar_file=${JAR_FILE}" >> $GITHUB_OUTPUT
+          echo "Found JAR: ${JAR_FILE}"
+      
+      - name: Login to internal private docker repo
+        uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef #v3.6.0
+        with:
+          registry: ${{ vars.IMAGE_REGISTRY_HOST }}
+          username: ${{ secrets.IMAGE_REGISTRY_USERNAME }}
+          password: ${{ secrets.IMAGE_REGISTRY_PASSWORD }}
+      
+      - name: Build and push Docker image
+        run: |
+          IMAGE_NAME="${{ env.IMAGE_REGISTRY_HOST }}/${{ inputs.app_name }}:${{ needs.setup.outputs.image_tag }}"
+          
+          docker build \
+            -f docker-templates/${{ inputs.dockerfile_path }} \
+            --build-arg BASE_IMAGE=${{ inputs.base_docker_image }} \
+            --build-arg JAR_FILE=${{ steps.find_jar.outputs.jar_file }} \
+            --build-arg HEAP_SIZE=${{ inputs.heap_size }} \
+            --build-arg APP_NAME=${{ inputs.app_name }} \
+            -t "${IMAGE_NAME}" \
+            .
+          
+          # docker push "${IMAGE_NAME}"
+          echo "FAKE ushed image: ${IMAGE_NAME}"
+
+  # # Build and run unit tests
+  # build-and-test:
+  #   runs-on: arc-runners-javadev
+  #   needs: setup
+  #   steps:
+  #     - name: Checkout code
+  #       uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 #v5
+      
+  #     - name: Initialize Maven settings
+  #       uses: s4u/maven-settings-action@v3.1.0
+  #       with:
+  #         servers: |
+  #           [
+  #           {"id": "private-snapshots", "username": "${{ env.MAVEN_REPO_USERNAME }}", "password": "${{ env.MAVEN_REPO_PASSWORD }}"},
+  #           {"id": "private-releases", "username": "${{ env.MAVEN_REPO_USERNAME }}", "password": "${{ env.MAVEN_REPO_PASSWORD }}"},
+  #           {"id": "nexus", "username": "${{ env.MAVEN_REPO_USERNAME }}", "password": "${{ env.MAVEN_REPO_PASSWORD }}"}
+  #           ]
+  #         mirrors: |
+  #           [
+  #           {"id": "nexus", "name":"nexus", "mirrorOf":"*", "url":"${{ env.MAVEN_REPO_URL }}"}
+  #           ]
+  #         sonatypeSnapshots: true          
+  #       env:
+  #         MAVEN_REPO_USERNAME: ${{ secrets.MAVEN_REPO_USERNAME }}
+  #         MAVEN_REPO_PASSWORD: ${{ secrets.MAVEN_REPO_PASSWORD }}
+  #         MAVEN_REPO_URL: ${{ vars.MAVEN_REPO_URL }}       
+
+  #     - name: Build and run unit tests
+  #       run: |
+  #         PROFILES=""
+  #         if [ -n "${{ inputs.maven_profiles }}" ]; then
+  #           PROFILES="-P${{ inputs.maven_profiles }}"
+  #         fi
+  #         mvn clean package ${PROFILES}
       
       # - name: Upload test results
       #   if: always()
@@ -305,96 +386,7 @@ jobs:
 #   #         MAVEN_REPO_USERNAME: ${{ secrets.MAVEN_REPO_USERNAME }}
 #   #         MAVEN_REPO_PASSWORD: ${{ secrets.MAVEN_REPO_PASSWORD }}
 
-#   # Build Docker image
-#   build-docker-image:
-#     runs-on: arc-runners-javadev
-#     needs: [setup, build-and-test]
-#     steps:
-#       - name: Checkout code
-#         uses: actions/checkout@v4
-      
-#       - name: Checkout Dockerfile repo
-#         uses: actions/checkout@v4
-#         with:
-#           repository: ${{ inputs.dockerfile_repo }}
-#           path: docker-templates
-#           token: ${{ secrets.CICD_TOKEN }}
-      
-#       - name: Set up JDK
-#         uses: actions/setup-java@v4
-#         with:
-#           java-version: ${{ inputs.java_version }}
-#           distribution: 'temurin'
-#           cache: 'maven'
-      
-#       - name: Configure Maven settings
-#         run: |
-#           mkdir -p ~/.m2
-#           cat > ~/.m2/settings.xml << 'EOF'
-#           <settings>
-#             <servers>
-#               <server>
-#                 <id>maven-releases</id>
-#                 <username>${env.MAVEN_REPO_USERNAME}</username>
-#                 <password>${env.MAVEN_REPO_PASSWORD}</password>
-#               </server>
-#               <server>
-#                 <id>maven-snapshots</id>
-#                 <username>${env.MAVEN_REPO_USERNAME}</username>
-#                 <password>${env.MAVEN_REPO_PASSWORD}</password>
-#               </server>
-#             </servers>
-#             <mirrors>
-#               <mirror>
-#                 <id>maven-public</id>
-#                 <mirrorOf>*</mirrorOf>
-#                 <url>${env.MAVEN_REPO_URL}</url>
-#               </mirror>
-#             </mirrors>
-#           </settings>
-#           EOF
-#         env:
-#           MAVEN_REPO_USERNAME: ${{ secrets.MAVEN_REPO_USERNAME }}
-#           MAVEN_REPO_PASSWORD: ${{ secrets.MAVEN_REPO_PASSWORD }}
-      
-#       - name: Package application
-#         run: |
-#           PROFILES=""
-#           if [ -n "${{ inputs.maven_profiles }}" ]; then
-#             PROFILES="-P${{ inputs.maven_profiles }}"
-#           fi
-#           mvn package -DskipTests ${PROFILES}
-#         env:
-#           MAVEN_REPO_USERNAME: ${{ secrets.MAVEN_REPO_USERNAME }}
-#           MAVEN_REPO_PASSWORD: ${{ secrets.MAVEN_REPO_PASSWORD }}
-      
-#       - name: Find JAR file
-#         id: find_jar
-#         run: |
-#           JAR_FILE=$(find target -name "*.jar" -not -name "*-sources.jar" -not -name "*-javadoc.jar" | head -1)
-#           echo "jar_file=${JAR_FILE}" >> $GITHUB_OUTPUT
-#           echo "Found JAR: ${JAR_FILE}"
-      
-#       - name: Login to Docker registry
-#         run: |
-#           echo "${{ secrets.IMAGE_REGISTRY_PASSWORD }}" | docker login ${{ env.IMAGE_REGISTRY_HOST }} \
-#             -u "${{ secrets.IMAGE_REGISTRY_USERNAME }}" --password-stdin
-      
-#       - name: Build and push Docker image
-#         run: |
-#           IMAGE_NAME="${{ env.IMAGE_REGISTRY_HOST }}/${{ inputs.app_name }}:${{ needs.setup.outputs.image_tag }}"
-          
-#           docker build \
-#             -f docker-templates/${{ inputs.dockerfile_path }} \
-#             --build-arg BASE_IMAGE=${{ inputs.base_docker_image }} \
-#             --build-arg JAR_FILE=${{ steps.find_jar.outputs.jar_file }} \
-#             --build-arg HEAP_SIZE=${{ inputs.heap_size }} \
-#             --build-arg APP_NAME=${{ inputs.app_name }} \
-#             -t "${IMAGE_NAME}" \
-#             .
-          
-#           docker push "${IMAGE_NAME}"
-#           echo "Pushed image: ${IMAGE_NAME}"
+
 
 #   # Deploy to dev environment (direct commit)
 #   deploy-dev:
