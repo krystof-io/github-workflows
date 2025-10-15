@@ -164,11 +164,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 #v5
         
-      - name: Checkout workflow repo
+      - name: Checkout dockerfile repo
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 #v5
         with:
           repository: ${{ inputs.dockerfile_repo }}
-          path: workflow-config          
+          path: docker-templates
 
       - name: Initialize Maven settings
         uses: s4u/maven-settings-action@v3.1.0
@@ -216,7 +216,7 @@ jobs:
       
       - name: Build and push Docker image
         run: |
-          IMAGE_NAME="${{ env.IMAGE_REGISTRY_HOST }}/${{ inputs.app_name }}:${{ needs.setup.outputs.image_tag }}"
+          IMAGE_NAME="${{ env.IMAGE_REGISTRY_HOST }}/${{ inputs.app_name }}:${{ needs.build.outputs.image_tag }}"
           
           docker build \
             -f docker-templates/${{ inputs.dockerfile_path }} \
