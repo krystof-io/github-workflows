@@ -359,7 +359,6 @@ jobs:
       - name: Run Sonar analysis
         run: |
           mvn clean verify sonar:sonar \
-            -Dsonar.projectKey=${{ inputs.app_name }} \
             -Dsonar.host.url=${{ secrets.SONAR_HOST_URL }} \
             -Dsonar.token=${{ secrets.SONAR_TOKEN }}
 
