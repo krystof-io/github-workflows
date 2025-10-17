@@ -51,6 +51,8 @@ on:
         required: false
       SONAR_HOST_URL:
         required: false
+      NVD_API_KEY:
+        required: false
       CICD_TOKEN:
         required: true
       CICD_USER_EMAIL:
@@ -358,7 +360,11 @@ jobs:
                 
       - name: Run Sonar analysis
         run: |
-          mvn clean verify sonar:sonar \
+          mvn clean verify org.owasp:dependency-check-maven:12.1.8:check \
+            -Dformats=HTML,XML,JSON
+            -DnvdApiKey=${NVD_API_KEY}
+
+          mvn sonar:sonar \
             -Dsonar.host.url=${{ secrets.SONAR_HOST_URL }} \
             -Dsonar.token=${{ secrets.SONAR_TOKEN }}
 
