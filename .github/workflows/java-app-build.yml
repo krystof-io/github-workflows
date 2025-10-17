@@ -358,20 +358,25 @@ jobs:
           MAVEN_REPO_PASSWORD: ${{ secrets.MAVEN_REPO_PASSWORD }}
           MAVEN_REPO_URL: ${{ vars.MAVEN_REPO_URL }}  
                 
-      - name: Run Sonar analysis
+      - name: Pre Sonar Build
         run: |
-
           mvn clean verify
 
+      - name: Pre Sonar Dep Check
+        run: |
           mvn org.owasp:dependency-check-maven:12.1.8:check \
-            -Dformats=HTML,XML,JSON
-            -DnvdApiKey=${{ env.NVD_API_KEY }}
+            -Dformats=HTML,XML,JSON \
+            -DnvdApiKey=${{ env.NVD_API_KEY }} \
+            -DskipTests
+        env:
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
 
+      - name: Sonar Analysis
+        run: |
           mvn sonar:sonar \
             -Dsonar.host.url=${{ env.SONAR_HOST_URL }} \
             -Dsonar.token=${{ env.SONAR_TOKEN }}
         env:
-          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
