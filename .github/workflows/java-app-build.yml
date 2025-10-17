@@ -53,6 +53,10 @@ on:
         required: true
       NVD_API_KEY:
         required: true
+      S3_CACHE_ACCESS_KEY:
+        required: true
+      S3_CACHE_SECRET_KEY:
+        required: true              
       CICD_TOKEN:
         required: true
       CICD_USER_EMAIL:
@@ -362,6 +366,20 @@ jobs:
         run: |
           mvn clean verify
 
+      - uses: runs-on/cache@v4
+        with:
+          path: ~/.m2/repository/org/owasp/dependency-check-data
+          key: ${{ runner.os }}-owasp-data-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-owasp-data-
+        env:
+          RUNS_ON_S3_BUCKET_CACHE: 'dep-check-cache'
+          AWS_ACCESS_KEY_ID: ${{ secrets.S3_CACHE_ACCESS_KEY }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.S3_CACHE_SECRET_KEY }}
+          AWS_ENDPOINT_URL: ${{ env.S3_CACHE_ENDPOINT }}
+          AWS_REGION: 'us-east-1'
+          AWS_S3_FORCE_PATH_STYLE: 'true'
+                    
       - name: Pre Sonar Dep Check
         run: |
           mvn org.owasp:dependency-check-maven:12.1.8:check \
