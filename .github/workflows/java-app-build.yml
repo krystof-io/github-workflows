@@ -362,7 +362,7 @@ jobs:
         run: |
           mvn clean verify org.owasp:dependency-check-maven:12.1.8:check \
             -Dformats=HTML,XML,JSON
-            -DnvdApiKey=${NVD_API_KEY}
+            -DnvdApiKey=${{ secrets.NVD_API_KEY }}
 
           mvn sonar:sonar \
             -Dsonar.host.url=${{ secrets.SONAR_HOST_URL }} \
