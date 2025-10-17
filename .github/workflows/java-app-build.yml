@@ -48,11 +48,11 @@ on:
       MAVEN_REPO_PASSWORD:
         required: true
       SONAR_TOKEN:
-        required: false
+        required: true
       SONAR_HOST_URL:
-        required: false
+        required: true
       NVD_API_KEY:
-        required: false
+        required: true
       CICD_TOKEN:
         required: true
       CICD_USER_EMAIL:
@@ -362,11 +362,15 @@ jobs:
         run: |
           mvn clean verify org.owasp:dependency-check-maven:12.1.8:check \
             -Dformats=HTML,XML,JSON
-            -DnvdApiKey=${{ secrets.NVD_API_KEY }}
+            -DnvdApiKey=${{ env.NVD_API_KEY }}
 
           mvn sonar:sonar \
-            -Dsonar.host.url=${{ secrets.SONAR_HOST_URL }} \
-            -Dsonar.token=${{ secrets.SONAR_TOKEN }}
+            -Dsonar.host.url=${{ env.SONAR_HOST_URL }} \
+            -Dsonar.token=${{ env.SONAR_TOKEN }}
+        env:
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
 
 #   # Deploy to dev environment (direct commit)
