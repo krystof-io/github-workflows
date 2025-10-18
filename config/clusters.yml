@@ -7,13 +7,13 @@
 clusters:
   # Build cluster - hosts CI/CD infrastructure, Nexus, etc.
   build:
-    gitops_repo: 'krystof.io/kio-build-cluster'
+    gitops_repo: 'krystof-io/kio-build-cluster'
     cluster_path: 'k8s-manifests/components/apps'
     description: 'Build and CI/CD infrastructure cluster'
   
   # # App cluster - hosts production applications
   # app:
-  #   gitops_repo: 'krystof.io/kio-homelab'
+  #   gitops_repo: 'krystof-io/kio-homelab'
   #   cluster_path: 'app-cluster'
   #   description: 'Production application cluster'
 
