@@ -373,9 +373,9 @@ jobs:
           RUNS_ON_S3_BUCKET_CACHE: 'runner-caches'
           AWS_ACCESS_KEY_ID: ${{ secrets.S3_CACHE_ACCESS_KEY }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.S3_CACHE_SECRET_KEY }}
-          AWS_S3_ENDPOINT_URL: ${{ vars.S3_CACHE_ENDPOINT }}
+          RUNS_ON_S3_BUCKET_ENDPOINT: ${{ vars.S3_CACHE_ENDPOINT }}
           RUNS_ON_AWS_REGION: 'default'
-          AWS_S3_FORCE_PATH_STYLE: 'true'
+          RUNS_ON_S3_FORCE_PATH_STYLE: 'true'
 
       - name: Pre Sonar Build
         run: |
