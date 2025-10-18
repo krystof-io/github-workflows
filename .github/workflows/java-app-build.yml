@@ -380,15 +380,15 @@ jobs:
           AWS_REGION: ''
           AWS_S3_FORCE_PATH_STYLE: 'true'
                     
-      # - name: Pre Sonar Dep Check
-      #   run: |
-      #     mvn org.owasp:dependency-check-maven:12.1.8:check \
-      #       -Dformats=HTML,XML,JSON \
-      #       -DnvdApiKey=${{ env.NVD_API_KEY }} \
-      #       -DskipTests \
-      #       -DoutputDirectory=.
-      #   env:
-      #     NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+      - name: Pre Sonar Dep Check
+        run: |
+          mvn org.owasp:dependency-check-maven:12.1.8:check \
+            -Dformats=HTML,XML,JSON \
+            -DnvdApiKey=${{ env.NVD_API_KEY }} \
+            -DskipTests \
+            -DoutputDirectory=.
+        env:
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
 
       # - name: Sonar Analysis
       #   run: |
