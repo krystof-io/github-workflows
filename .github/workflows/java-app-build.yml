@@ -370,10 +370,10 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-owasp-data-
         env:
-          RUNS_ON_S3_BUCKET_CACHE: 'dep-check-cache'
+          RUNS_ON_S3_BUCKET_CACHE: 'runner-caches'
           AWS_ACCESS_KEY_ID: ${{ secrets.S3_CACHE_ACCESS_KEY }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.S3_CACHE_SECRET_KEY }}
-          RUNS_ON_S3_BUCKET_ENDPOINT: ${{ vars.S3_CACHE_ENDPOINT }}
+          AWS_S3_ENDPOINT_URL: ${{ vars.S3_CACHE_ENDPOINT }}
           RUNS_ON_AWS_REGION: 'default'
           AWS_S3_FORCE_PATH_STYLE: 'true'
 
