@@ -107,9 +107,7 @@ jobs:
       - uses: krystof-io/cache@v4.3.0-1.0.0
         with:
           path: ~/.m2/repository
-          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
-          # restore-keys: |
-          #   ${{ runner.os }}-maven
+          key: maven-cache-${{ github.run_id }}-${{ github.run_attempt }}
         env:
           RUNS_ON_S3_BUCKET_CACHE: 'runner-caches'
           AWS_ACCESS_KEY_ID: ${{ secrets.S3_CACHE_ACCESS_KEY }}
@@ -193,9 +191,7 @@ jobs:
       - uses: krystof-io/cache@v4.3.0-1.0.0
         with:
           path: ~/.m2/repository
-          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
-          # restore-keys: |
-          #   ${{ runner.os }}-maven
+          key: maven-cache-${{ github.run_id }}-${{ github.run_attempt }}
         env:
           RUNS_ON_S3_BUCKET_CACHE: 'runner-caches'
           AWS_ACCESS_KEY_ID: ${{ secrets.S3_CACHE_ACCESS_KEY }}
@@ -393,9 +389,7 @@ jobs:
       - uses: krystof-io/cache@v4.3.0-1.0.0
         with:
           path: ~/.m2/repository
-          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
-          # restore-keys: |
-          #   ${{ runner.os }}-maven
+          key: maven-cache-${{ github.run_id }}-${{ github.run_attempt }}
         env:
           RUNS_ON_S3_BUCKET_CACHE: 'runner-caches'
           AWS_ACCESS_KEY_ID: ${{ secrets.S3_CACHE_ACCESS_KEY }}
@@ -407,7 +401,7 @@ jobs:
       - uses: krystof-io/cache@v4.3.0-1.0.0
         with:
           path: ~/.m2/repository/org/owasp/dependency-check-data
-          key: ${{ runner.os }}-owasp-data-${{ hashFiles('**/pom.xml') }}
+          key: ${{ runner.os }}-owasp-data-${{ hashFiles('**/pom.xml') }}-${{ github.run_id }}
           restore-keys: |
             ${{ runner.os }}-owasp-data-
         env:
