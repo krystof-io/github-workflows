@@ -70,6 +70,7 @@ jobs:
     runs-on: arc-runners-javadev
     outputs:
       clusters_matrix: ${{ steps.parse.outputs.matrix }}
+      has_clusters: ${{ steps.parse.outputs.has_clusters }}
       version: ${{ steps.version.outputs.version }}
       image_tag: ${{ steps.version.outputs.image_tag }}
       is_release: ${{ steps.version.outputs.is_release }}
@@ -103,6 +104,10 @@ jobs:
             })
           ')
           echo "matrix={\"include\":$MATRIX}" >> $GITHUB_OUTPUT
+          
+          # Check if we have any clusters to deploy to
+          HAS_CLUSTERS=$(echo $TARGET_CLUSTERS | jq 'length > 0')
+          echo "has_clusters=$HAS_CLUSTERS" >> $GITHUB_OUTPUT
 
       - uses: krystof-io/cache@v4.3.0-1.0.0
         with:
@@ -444,7 +449,7 @@ jobs:
   deploy-dev:
     runs-on: arc-runners-javadev
     needs: [build, build-docker-image]
-    if: github.ref != 'refs/tags/v*'
+    if: github.ref != 'refs/tags/v*' && needs.build.outputs.has_clusters == 'true'
     strategy:
       matrix: ${{ fromJson(needs.build.outputs.clusters_matrix) }}
     steps:
@@ -463,7 +468,7 @@ jobs:
           GITOPS_REPO="${{ matrix.gitops_repo }}"
           APP_NAME="${{ inputs.app_name }}"
           NAMESPACE="kio-dev"
-          IMAGE_TAG="${{ needs.setup.outputs.image_tag }}"
+          IMAGE_TAG="${{ needs.build.outputs.image_tag }}"
           CLUSTER_PATH="${{ matrix.cluster_path }}"
           
           # Clone GitOps repo
@@ -480,7 +485,7 @@ jobs:
           elif [ -f "${APP_PATH}/kustomization.yaml" ]; then
             # Update Kustomization
             cd "${APP_PATH}"
-            kustomize edit set image "${APP_NAME}=${{ env.IMAGE_REGISTRY_HOST }}/${APP_NAME}:${IMAGE_TAG}"
+            kustomize edit set image "${APP_NAME}=${{ vars.IMAGE_REGISTRY_HOST }}/${APP_NAME}:${IMAGE_TAG}"
             echo "Updated Kustomization at ${APP_PATH}/kustomization.yaml"
             cd -
           else

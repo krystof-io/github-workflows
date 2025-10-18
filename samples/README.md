@@ -400,6 +400,30 @@ with:
   target_clusters: '["build", "app"]'
 ```
 
+### Build Only (No Deployment)
+
+If you want to build, test, and create Docker images without deploying anywhere, simply leave `target_clusters` empty:
+
+```yaml
+with:
+  app_name: my-service
+  target_clusters: '[]'  # Empty array - no deployment
+```
+
+This is useful for:
+- Libraries that don't need deployment
+- Applications in early development
+- CI-only workflows for testing
+- Building images for manual deployment
+
+The workflow will:
+- ✅ Build and test the application
+- ✅ Run Sonar analysis (on main branch)
+- ✅ Build and push Docker images  
+- ❌ Skip all deployment steps
+
+**Note**: Prior to this fix, leaving `target_clusters` empty would cause the workflow to fail with "matrix must define at least one vector". This has been resolved by making the deployment jobs conditional.
+
 ### Custom Heap Size
 
 ```yaml
