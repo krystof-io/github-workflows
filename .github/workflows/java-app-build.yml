@@ -386,7 +386,7 @@ jobs:
             -Dformats=HTML,XML,JSON \
             -DnvdApiKey=${{ env.NVD_API_KEY }} \
             -DskipTests \
-            -DoutputDirectory=.
+            -Dodc.outputDirectory=.
         env:
           NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
 
