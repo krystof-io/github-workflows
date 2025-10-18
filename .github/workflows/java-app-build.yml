@@ -440,62 +440,62 @@ jobs:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
 
-#   # Deploy to dev environment (direct commit)
-#   deploy-dev:
-#     runs-on: arc-runners-javadev
-#     needs: [setup, build-docker-image]
-#     if: github.ref != 'refs/tags/v*'
-#     strategy:
-#       matrix: ${{ fromJson(needs.setup.outputs.clusters_matrix) }}
-#     steps:
-#       - name: Install dependencies
-#         run: |
-#           # Ensure yq is available
-#           if ! command -v yq &> /dev/null; then
-#             sudo wget https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/bin/yq
-#             sudo chmod +x /usr/bin/yq
-#           fi
+  # Deploy to dev environment (direct commit)
+  deploy-dev:
+    runs-on: arc-runners-javadev
+    needs: [build, build-docker-image]
+    if: github.ref != 'refs/tags/v*'
+    strategy:
+      matrix: ${{ fromJson(needs.setup.outputs.clusters_matrix) }}
+    steps:
+      - name: Install dependencies
+        run: |
+          # Ensure yq is available
+          if ! command -v yq &> /dev/null; then
+            sudo wget https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/bin/yq
+            sudo chmod +x /usr/bin/yq
+          fi
       
-#       - name: Update GitOps repo
-#         run: |
-#           set -e
+      - name: Update GitOps repo
+        run: |
+          set -e
           
-#           GITOPS_REPO="${{ matrix.gitops_repo }}"
-#           APP_NAME="${{ inputs.app_name }}"
-#           NAMESPACE="kio-dev"
-#           IMAGE_TAG="${{ needs.setup.outputs.image_tag }}"
-#           CLUSTER_PATH="${{ matrix.cluster_path }}"
+          GITOPS_REPO="${{ matrix.gitops_repo }}"
+          APP_NAME="${{ inputs.app_name }}"
+          NAMESPACE="kio-dev"
+          IMAGE_TAG="${{ needs.setup.outputs.image_tag }}"
+          CLUSTER_PATH="${{ matrix.cluster_path }}"
           
-#           # Clone GitOps repo
-#           git clone https://x-access-token:${{ secrets.CICD_TOKEN }}@github.com/${GITOPS_REPO}.git gitops
-#           cd gitops
+          # Clone GitOps repo
+          git clone https://x-access-token:${{ secrets.CICD_TOKEN }}@github.com/${GITOPS_REPO}.git gitops
+          cd gitops
           
-#           # Update image tag
-#           APP_PATH="clusters/${CLUSTER_PATH}/namespaces/${NAMESPACE}/${APP_NAME}"
+          # Update image tag
+          APP_PATH="clusters/${CLUSTER_PATH}/namespaces/${NAMESPACE}/${APP_NAME}"
           
-#           if [ -f "${APP_PATH}/helmrelease.yaml" ]; then
-#             # Update Helm release
-#             yq eval ".spec.values.image.tag = \"${IMAGE_TAG}\"" -i "${APP_PATH}/helmrelease.yaml"
-#             echo "Updated HelmRelease at ${APP_PATH}/helmrelease.yaml"
-#           elif [ -f "${APP_PATH}/kustomization.yaml" ]; then
-#             # Update Kustomization
-#             cd "${APP_PATH}"
-#             kustomize edit set image "${APP_NAME}=${{ env.IMAGE_REGISTRY_HOST }}/${APP_NAME}:${IMAGE_TAG}"
-#             echo "Updated Kustomization at ${APP_PATH}/kustomization.yaml"
-#             cd -
-#           else
-#             echo "ERROR: No helmrelease.yaml or kustomization.yaml found at ${APP_PATH}"
-#             exit 1
-#           fi
+          if [ -f "${APP_PATH}/helmrelease.yaml" ]; then
+            # Update Helm release
+            yq eval ".spec.values.image.tag = \"${IMAGE_TAG}\"" -i "${APP_PATH}/helmrelease.yaml"
+            echo "Updated HelmRelease at ${APP_PATH}/helmrelease.yaml"
+          elif [ -f "${APP_PATH}/kustomization.yaml" ]; then
+            # Update Kustomization
+            cd "${APP_PATH}"
+            kustomize edit set image "${APP_NAME}=${{ env.IMAGE_REGISTRY_HOST }}/${APP_NAME}:${IMAGE_TAG}"
+            echo "Updated Kustomization at ${APP_PATH}/kustomization.yaml"
+            cd -
+          else
+            echo "ERROR: No helmrelease.yaml or kustomization.yaml found at ${APP_PATH}"
+            exit 1
+          fi
           
-#           # Commit and push
-#           git config user.name "${{ secrets.CICD_USER_NAME }}"
-#           git config user.email "${{ secrets.CICD_USER_EMAIL }}"
-#           git add .
-#           git commit -m "Deploy ${APP_NAME} ${IMAGE_TAG} to ${NAMESPACE} on ${{ matrix.name }} cluster"
-#           git push origin main
+          # # Commit and push
+          # git config user.name "${{ secrets.CICD_USER_NAME }}"
+          # git config user.email "${{ secrets.CICD_USER_EMAIL }}"
+          # git add .
+          # git commit -m "Deploy ${APP_NAME} ${IMAGE_TAG} to ${NAMESPACE} on ${{ matrix.name }} cluster"
+          # git push origin main
           
-#           echo "✅ Successfully deployed to ${{ matrix.name }} cluster (dev)"
+          echo "✅ Successfully deployed to ${{ matrix.name }} cluster (dev)"
 
 #   # Deploy to prod environment (create PR with auto-merge)
 #   deploy-prod:
