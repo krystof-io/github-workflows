@@ -362,7 +362,7 @@ jobs:
           MAVEN_REPO_PASSWORD: ${{ secrets.MAVEN_REPO_PASSWORD }}
           MAVEN_REPO_URL: ${{ vars.MAVEN_REPO_URL }}  
             
-      - uses: runs-on/cache@v4
+      - uses: runs-on/cache@v4.3.0
         with:
           #path: ~/.m2/repository/org/owasp/dependency-check-data
           path: ~/.m2/repository/org
