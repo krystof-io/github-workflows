@@ -104,6 +104,20 @@ jobs:
           ')
           echo "matrix={\"include\":$MATRIX}" >> $GITHUB_OUTPUT
 
+      - uses: krystof-io/cache@v4.3.0-1.0.0
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+          # restore-keys: |
+          #   ${{ runner.os }}-maven
+        env:
+          RUNS_ON_S3_BUCKET_CACHE: 'runner-caches'
+          AWS_ACCESS_KEY_ID: ${{ secrets.S3_CACHE_ACCESS_KEY }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.S3_CACHE_SECRET_KEY }}
+          RUNS_ON_S3_BUCKET_ENDPOINT: ${{ vars.S3_CACHE_ENDPOINT }}
+          RUNS_ON_AWS_REGION: 'default'
+          RUNS_ON_S3_FORCE_PATH_STYLE: 'true'
+
       - name: Initialize Maven settings
         uses: s4u/maven-settings-action@v3.1.0
         with:
@@ -175,6 +189,20 @@ jobs:
         with:
           repository: ${{ inputs.dockerfile_repo }}
           path: docker-templates
+
+      - uses: krystof-io/cache@v4.3.0-1.0.0
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+          # restore-keys: |
+          #   ${{ runner.os }}-maven
+        env:
+          RUNS_ON_S3_BUCKET_CACHE: 'runner-caches'
+          AWS_ACCESS_KEY_ID: ${{ secrets.S3_CACHE_ACCESS_KEY }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.S3_CACHE_SECRET_KEY }}
+          RUNS_ON_S3_BUCKET_ENDPOINT: ${{ vars.S3_CACHE_ENDPOINT }}
+          RUNS_ON_AWS_REGION: 'default'
+          RUNS_ON_S3_FORCE_PATH_STYLE: 'true'
 
       - name: Initialize Maven settings
         uses: s4u/maven-settings-action@v3.1.0
@@ -362,6 +390,20 @@ jobs:
           MAVEN_REPO_PASSWORD: ${{ secrets.MAVEN_REPO_PASSWORD }}
           MAVEN_REPO_URL: ${{ vars.MAVEN_REPO_URL }}  
             
+      - uses: krystof-io/cache@v4.3.0-1.0.0
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+          # restore-keys: |
+          #   ${{ runner.os }}-maven
+        env:
+          RUNS_ON_S3_BUCKET_CACHE: 'runner-caches'
+          AWS_ACCESS_KEY_ID: ${{ secrets.S3_CACHE_ACCESS_KEY }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.S3_CACHE_SECRET_KEY }}
+          RUNS_ON_S3_BUCKET_ENDPOINT: ${{ vars.S3_CACHE_ENDPOINT }}
+          RUNS_ON_AWS_REGION: 'default'
+          RUNS_ON_S3_FORCE_PATH_STYLE: 'true'
+                    
       - uses: krystof-io/cache@v4.3.0-1.0.0
         with:
           path: ~/.m2/repository/org/owasp/dependency-check-data
