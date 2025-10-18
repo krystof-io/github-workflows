@@ -361,11 +361,7 @@ jobs:
           MAVEN_REPO_USERNAME: ${{ secrets.MAVEN_REPO_USERNAME }}
           MAVEN_REPO_PASSWORD: ${{ secrets.MAVEN_REPO_PASSWORD }}
           MAVEN_REPO_URL: ${{ vars.MAVEN_REPO_URL }}  
-                
-      - name: Pre Sonar Build
-        run: |
-          mvn clean verify
-
+            
       - uses: runs-on/cache@v4
         with:
           #path: ~/.m2/repository/org/owasp/dependency-check-data
@@ -378,8 +374,14 @@ jobs:
           AWS_ACCESS_KEY_ID: ${{ secrets.S3_CACHE_ACCESS_KEY }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.S3_CACHE_SECRET_KEY }}
           RUNS_ON_S3_BUCKET_ENDPOINT: ${{ vars.S3_CACHE_ENDPOINT }}
-          RUNS_ON_AWS_REGION: ''
+          RUNS_ON_AWS_REGION: 'default'
           AWS_S3_FORCE_PATH_STYLE: 'true'
+
+      - name: Pre Sonar Build
+        run: |
+          mvn clean verify
+
+
                     
       # - name: Pre Sonar Dep Check
       #   run: |
