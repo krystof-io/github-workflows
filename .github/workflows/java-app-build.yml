@@ -192,6 +192,8 @@ jobs:
         with:
           path: ~/.m2/repository
           key: maven-cache-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            maven-cache-          
         env:
           RUNS_ON_S3_BUCKET_CACHE: 'runner-caches'
           AWS_ACCESS_KEY_ID: ${{ secrets.S3_CACHE_ACCESS_KEY }}
@@ -390,6 +392,8 @@ jobs:
         with:
           path: ~/.m2/repository
           key: maven-cache-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            maven-cache-
         env:
           RUNS_ON_S3_BUCKET_CACHE: 'runner-caches'
           AWS_ACCESS_KEY_ID: ${{ secrets.S3_CACHE_ACCESS_KEY }}
