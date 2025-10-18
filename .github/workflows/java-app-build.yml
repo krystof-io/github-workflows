@@ -19,7 +19,7 @@ on:
         type: string
         description: 'Maven profiles to activate (comma-separated)'
       target_clusters:
-        default: '["build"]'
+        default: '[]'
         type: string
         description: 'JSON array of target clusters'
       dockerfile_repo:
