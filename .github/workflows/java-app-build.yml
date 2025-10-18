@@ -446,7 +446,7 @@ jobs:
     needs: [build, build-docker-image]
     if: github.ref != 'refs/tags/v*'
     strategy:
-      matrix: ${{ fromJson(needs.setup.outputs.clusters_matrix) }}
+      matrix: ${{ fromJson(needs.build.outputs.clusters_matrix) }}
     steps:
       - name: Install dependencies
         run: |
