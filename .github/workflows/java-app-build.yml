@@ -385,8 +385,7 @@ jobs:
           mvn org.owasp:dependency-check-maven:12.1.8:check \
             -Dformats=HTML,XML,JSON \
             -DnvdApiKey=${{ env.NVD_API_KEY }} \
-            -DskipTests \
-            -Dodc.outputDirectory=.
+            -DskipTests 
         env:
           NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
 
