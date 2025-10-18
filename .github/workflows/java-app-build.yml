@@ -368,7 +368,8 @@ jobs:
 
       - uses: runs-on/cache@v4
         with:
-          path: ~/.m2/repository/org/owasp/dependency-check-data
+          #path: ~/.m2/repository/org/owasp/dependency-check-data
+          path: ~/.m2/repository/org
           key: ${{ runner.os }}-owasp-data-${{ hashFiles('**/pom.xml') }}
           restore-keys: |
             ${{ runner.os }}-owasp-data-
@@ -377,18 +378,18 @@ jobs:
           AWS_ACCESS_KEY_ID: ${{ secrets.S3_CACHE_ACCESS_KEY }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.S3_CACHE_SECRET_KEY }}
           RUNS_ON_S3_BUCKET_ENDPOINT: ${{ vars.S3_CACHE_ENDPOINT }}
-          AWS_REGION: ''
+          RUNS_ON_AWS_REGION: ''
           AWS_S3_FORCE_PATH_STYLE: 'true'
                     
-      - name: Pre Sonar Dep Check
-        run: |
-          mvn org.owasp:dependency-check-maven:12.1.8:check \
-            -Dformats=HTML,XML,JSON \
-            -DnvdApiKey=${{ env.NVD_API_KEY }} \
-            -DskipTests \
-            -DoutputDirectory=.
-        env:
-          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+      # - name: Pre Sonar Dep Check
+      #   run: |
+      #     mvn org.owasp:dependency-check-maven:12.1.8:check \
+      #       -Dformats=HTML,XML,JSON \
+      #       -DnvdApiKey=${{ env.NVD_API_KEY }} \
+      #       -DskipTests \
+      #       -DoutputDirectory=.
+      #   env:
+      #     NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
 
       # - name: Sonar Analysis
       #   run: |
