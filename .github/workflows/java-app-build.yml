@@ -364,8 +364,7 @@ jobs:
             
       - uses: runs-on/cache@v4.3.0
         with:
-          #path: ~/.m2/repository/org/owasp/dependency-check-data
-          path: ~/.m2/repository/org
+          path: ~/.m2/repository/org/owasp/dependency-check-data
           key: ${{ runner.os }}-owasp-data-${{ hashFiles('**/pom.xml') }}
           restore-keys: |
             ${{ runner.os }}-owasp-data-
@@ -380,27 +379,25 @@ jobs:
       - name: Pre Sonar Build
         run: |
           mvn clean verify
-
-
                     
-      # - name: Pre Sonar Dep Check
-      #   run: |
-      #     mvn org.owasp:dependency-check-maven:12.1.8:check \
-      #       -Dformats=HTML,XML,JSON \
-      #       -DnvdApiKey=${{ env.NVD_API_KEY }} \
-      #       -DskipTests \
-      #       -DoutputDirectory=.
-      #   env:
-      #     NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+      - name: Pre Sonar Dep Check
+        run: |
+          mvn org.owasp:dependency-check-maven:12.1.8:check \
+            -Dformats=HTML,XML,JSON \
+            -DnvdApiKey=${{ env.NVD_API_KEY }} \
+            -DskipTests \
+            -DoutputDirectory=.
+        env:
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
 
-      # - name: Sonar Analysis
-      #   run: |
-      #     mvn sonar:sonar \
-      #       -Dsonar.host.url=${{ env.SONAR_HOST_URL }} \
-      #       -Dsonar.token=${{ env.SONAR_TOKEN }}
-      #   env:
-      #     SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
-      #     SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      - name: Sonar Analysis
+        run: |
+          mvn sonar:sonar \
+            -Dsonar.host.url=${{ env.SONAR_HOST_URL }} \
+            -Dsonar.token=${{ env.SONAR_TOKEN }}
+        env:
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
 
 #   # Deploy to dev environment (direct commit)
