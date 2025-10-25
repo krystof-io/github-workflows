@@ -259,8 +259,6 @@ jobs:
             -f docker-templates/${{ inputs.dockerfile_path }} \
             --build-arg BASE_IMAGE=${{ inputs.base_docker_image }} \
             --build-arg JAR_FILE=${{ steps.find_jar.outputs.jar_file }} \
-            --build-arg HEAP_SIZE=${{ inputs.heap_size }} \
-            --build-arg APP_NAME=${{ inputs.app_name }} \
             -t "${IMAGE_NAME}" \
             .
           
