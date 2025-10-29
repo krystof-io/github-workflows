@@ -177,9 +177,9 @@ Settings → Secrets and variables → Actions → Variables → New organizatio
 | Variable Name | Description | Value |
 |--------------|-------------|-------|
 | `IMAGE_REGISTRY_HOST` | Docker registry hostname | `docker-private.build.krystof.io` |
-| `MAVEN_REPO_URL` | Maven public repository URL | `http://registry.prod.krystof.io/repository/maven-public` |
-| `MAVEN_PRIVATE_RELEASE_REPO_URL` | Maven releases repository URL | `https://registry.prod.krystof.io/repository/maven-releases/` |
-| `MAVEN_PRIVATE_SNAPSHOT_REPO_URL` | Maven snapshots repository URL | `https://registry.prod.krystof.io/repository/maven-snapshots/` |
+| `MAVEN_REPO_URL` | Maven public repository URL | `http://registry.build.krystof.io/repository/maven-public` |
+| `MAVEN_PRIVATE_RELEASE_REPO_URL` | Maven releases repository URL | `https://registry.build.krystof.io/repository/maven-releases/` |
+| `MAVEN_PRIVATE_SNAPSHOT_REPO_URL` | Maven snapshots repository URL | `https://registry.build.krystof.io/repository/maven-snapshots/` |
 
 These variables are automatically available to all workflows in the organization.
 
