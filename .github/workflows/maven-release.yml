@@ -37,8 +37,6 @@ on:
         required: true
       MAVEN_REPO_PASSWORD:
         required: true
-      GITHUB_TOKEN:
-        required: true
 
 jobs:
   # Validate inputs
