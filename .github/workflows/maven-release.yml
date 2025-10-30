@@ -270,7 +270,7 @@ jobs:
               -Dtag=v${AUTO_RELEASE_VERSION} \
               -DpushChanges=false \
               -DremoteTagging=false \
-              -DpreparationGoals=validate \              
+              -DpreparationGoals=validate \
               ${PROFILES}
               
             # Get the new development version from pom.xml (after release:prepare)
