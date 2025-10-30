@@ -353,7 +353,7 @@ jobs:
       matrix: ${{ fromJson(needs.build.outputs.clusters_matrix) }}
     steps:
       
-      - name: Update GitOps repo
+      - name: Update GitOps repo with retry logic
         run: |
           set -e
           
@@ -362,46 +362,137 @@ jobs:
           NAMESPACE="kio-dev"
           IMAGE_TAG="${{ needs.build.outputs.image_tag }}"
           CLUSTER_PATH="${{ matrix.cluster_path }}"
+          CLUSTER_NAME="${{ matrix.name }}"
+          
+          # Function to apply our specific changes
+          apply_changes() {
+            echo "🔧 Applying changes for ${APP_NAME} deployment..."
+            
+            # We expect a root kustomization.yaml in the namespace directory, and will add our app name to the
+            # kustomization.yaml if not already present
+            NAMESPACE_PATH="${CLUSTER_PATH}/${NAMESPACE}"
+
+            if [ -f "${NAMESPACE_PATH}/kustomization.yaml" ]; then
+              if ! grep -q " - ${APP_NAME}$" "${NAMESPACE_PATH}/kustomization.yaml"; then
+                cd "${NAMESPACE_PATH}"
+                # Just add the app name to the resources list in kustomization.yaml using yq
+                yq eval ".resources += [\"${APP_NAME}\"]" -i kustomization.yaml
+                echo "✅ Added ${APP_NAME} to kustomization at ${NAMESPACE_PATH}/kustomization.yaml"
+                cd -
+              else 
+                echo "ℹ️  ${APP_NAME} already present in kustomization at ${NAMESPACE_PATH}/kustomization.yaml"
+              fi
+            else
+              echo "⚠️  No kustomization.yaml found at ${NAMESPACE_PATH}"
+            fi
+
+            # Update image tag
+            APP_PATH="${CLUSTER_PATH}/${NAMESPACE}/${APP_NAME}"
+            
+            # We store our helm values in ${APP_NAME}-values.yaml
+            if [ -f "${APP_PATH}/${APP_NAME}-values.yaml" ]; then
+              # Check if tag is already current
+              CURRENT_TAG=$(yq eval ".image.tag" "${APP_PATH}/${APP_NAME}-values.yaml" 2>/dev/null || echo "none")
+              if [ "$CURRENT_TAG" = "$IMAGE_TAG" ]; then
+                echo "ℹ️  Image tag ${IMAGE_TAG} is already current in ${APP_PATH}/${APP_NAME}-values.yaml"
+                return 0
+              fi
+              
+              # Update Helm values
+              yq eval ".image.tag = \"${IMAGE_TAG}\"" -i "${APP_PATH}/${APP_NAME}-values.yaml"
+              echo "✅ Updated Helm values at ${APP_PATH}/${APP_NAME}-values.yaml (${CURRENT_TAG} → ${IMAGE_TAG})"
+            else
+              echo "⚠️  No values file found at ${APP_PATH}/${APP_NAME}-values.yaml"
+            fi
+          }
+          
+          # Function to attempt deployment with retry logic
+          deploy_with_retry() {
+            local max_attempts=5
+            local attempt=1
+            
+            while [ $attempt -le $max_attempts ]; do
+              echo "🚀 Deployment attempt $attempt of $max_attempts for ${CLUSTER_NAME} cluster"
+              
+              # Always pull latest changes before making modifications
+              echo "📥 Fetching latest changes from GitOps repo..."
+              git fetch origin main
+              git reset --hard origin/main
+              
+              # Apply our changes
+              apply_changes
+              
+              # Check if there are any changes to commit
+              if git diff --quiet && git diff --cached --quiet; then
+                echo "✅ No changes to commit - deployment is already current"
+                return 0
+              fi
+              
+              # Show what we're about to commit
+              echo "📝 Changes to be committed:"
+              git diff --name-status
+              
+              # Commit changes
+              git add .
+              git commit -m "Deploy ${APP_NAME} ${IMAGE_TAG} to ${NAMESPACE} on ${CLUSTER_NAME} cluster [attempt $attempt]
+
+              - Image: ${IMAGE_TAG}
+              - Triggered by: ${{ github.actor }}
+              - Commit: ${{ github.sha }}
+              - Workflow: ${{ github.run_id }}"
+              
+              # Try to push
+              echo "📤 Attempting to push changes..."
+              if git push origin main; then
+                echo "✅ Successfully deployed ${APP_NAME} to ${CLUSTER_NAME} cluster on attempt $attempt"
+                return 0
+              else
+                echo "❌ Push failed on attempt $attempt"
+                if [ $attempt -lt $max_attempts ]; then
+                  # Calculate backoff delay (exponential: 2, 4, 8, 16 seconds)
+                  local delay=$((2 ** attempt))
+                  echo "⏳ Waiting ${delay} seconds before retry..."
+                  sleep $delay
+                fi
+                attempt=$((attempt + 1))
+              fi
+            done
+            
+            echo "💥 Failed to deploy after $max_attempts attempts"
+            echo "This could indicate:"
+            echo "  - High concurrent deployment activity"
+            echo "  - Network connectivity issues"
+            echo "  - GitOps repository access problems"
+            echo "  - Conflicting manual changes in the repository"
+            return 1
+          }
           
           # Clone GitOps repo
+          echo "📥 Cloning GitOps repository: ${GITOPS_REPO}"
           git clone https://x-access-token:${{ secrets.CICD_TOKEN }}@github.com/${GITOPS_REPO}.git gitops
           cd gitops
-
-          # We expect a root kustomization.yaml in the namespace directory, and will add our app name to the
-          # kustomization.yaml if not already present
-          NAMESPACE_PATH="${CLUSTER_PATH}/${NAMESPACE}"
-
-          if [ -f "${NAMESPACE_PATH}/kustomization.yaml" ]; then
-            if ! grep -q " - ${APP_NAME}$" "${NAMESPACE_PATH}/kustomization.yaml"; then
-              cd "${NAMESPACE_PATH}"
-              #just add the app name to the resources list in kustomization.yaml using yq
-              yq eval ".resources += [\"${APP_NAME}\"]" -i kustomization.yaml
-              echo "Added ${APP_NAME} to kustomization at ${NAMESPACE_PATH}/kustomization.yaml"
-              cd -
-            else 
-              echo "${APP_NAME} already present in kustomization at ${NAMESPACE_PATH}/kustomization.yaml"
-            fi
-          fi
-
-          # Update image tag
-          APP_PATH="${CLUSTER_PATH}/${NAMESPACE}/${APP_NAME}"
           
-          #We store our helm values in ${APP_NAME}-values.yaml
-          if [ -f "${APP_PATH}/${APP_NAME}-values.yaml" ]; then
-            # Update Helm values
-            yq eval ".image.tag = \"${IMAGE_TAG}\"" -i "${APP_PATH}/${APP_NAME}-values.yaml"
-            echo "Updated Helm values at ${APP_PATH}/${APP_NAME}-values.yaml"
+          # Configure git
+          git config user.name "${{ secrets.CICD_USER_NAME }}"
+          git config user.email "${{ secrets.CICD_USER_EMAIL }}"
+          
+          # Show current state
+          echo "📍 Current GitOps repo state:"
+          echo "  Branch: $(git branch --show-current)"
+          echo "  Last commit: $(git log -1 --oneline)"
+          echo "  Target cluster: ${CLUSTER_NAME}"
+          echo "  Application: ${APP_NAME}"
+          echo "  Image tag: ${IMAGE_TAG}"
+          echo "  Namespace: ${NAMESPACE}"
+          
+          # Execute deployment with retry logic
+          if deploy_with_retry; then
+            echo "🎉 Deployment completed successfully!"
+          else
+            echo "💥 Deployment failed after all retry attempts"
+            exit 1
           fi
           
-          # # Commit and push
-          # git config user.name "${{ secrets.CICD_USER_NAME }}"
-          # git config user.email "${{ secrets.CICD_USER_EMAIL }}"
-          # git add .
-          # git commit -m "Deploy ${APP_NAME} ${IMAGE_TAG} to ${NAMESPACE} on ${{ matrix.name }} cluster"
-          # git push origin main
-          
-          echo "✅ Successfully deployed to ${{ matrix.name }} cluster (dev)"
-
 #   # Deploy to prod environment (create PR with auto-merge)
 #   deploy-prod:
 #     runs-on: arc-runners-javadev
