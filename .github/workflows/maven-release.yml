@@ -322,28 +322,6 @@ jobs:
           echo "🏷️  Pushing tag ${TAG_TO_PUSH}..."
           if git push -v origin "${TAG_TO_PUSH}"; then
             echo "✅ Git push command completed"
-            
-            # Verify tag actually exists on remote
-            echo "🔍 Verifying tag exists on remote..."
-            sleep 2  # Give GitHub a moment to process
-            
-            if git ls-remote --tags origin | grep -q "refs/tags/${TAG_TO_PUSH}$"; then
-              echo "✅ Tag ${TAG_TO_PUSH} confirmed on remote"
-            else
-              echo "❌ Tag push succeeded locally but tag not found on remote!"
-              echo "This indicates a permissions or authentication issue."
-              echo ""
-              echo "Remote tags currently available:"
-              git ls-remote --tags origin | tail -10
-              echo ""
-              echo "Checking authentication status..."
-              git remote -v
-              echo ""
-              echo "Testing write access with a simple push..."
-              # Test if we can push anything at all
-              git push --dry-run origin HEAD 2>&1 || echo "Push test failed"
-              exit 1
-            fi
           else
             echo "❌ Git push command failed"
             exit 1
@@ -462,7 +440,7 @@ jobs:
             fi
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "### 📋 Next Steps" >> $GITHUB_STEP_SUMMARY
-            echo "1. **🚀 Production Deployment**: Tag \`v${{ needs.validate-inputs.outputs.release_version }}\` will trigger CI/CD pipeline" >> $GITHUB_STEP_SUMMARY
+            echo "1. **🚀 Production Deployment**: Tag \`${PUSHED_TAG}\` will trigger CI/CD pipeline" >> $GITHUB_STEP_SUMMARY
             echo "2. **🔀 Merge PR**: Review and merge the automatically created PR to update main branch" >> $GITHUB_STEP_SUMMARY
             echo "3. **📝 Release Notes**: Add release notes to the GitHub release created by the tag" >> $GITHUB_STEP_SUMMARY
             echo "4. **📊 Monitor**: Check production deployment and application health" >> $GITHUB_STEP_SUMMARY
@@ -473,7 +451,7 @@ jobs:
           echo "- [📋 Actions Run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})" >> $GITHUB_STEP_SUMMARY
           
           if [[ "${{ inputs.dry_run }}" != "true" ]]; then
-            echo "- [🏷️ Release Tag](https://github.com/${{ github.repository }}/releases/tag/v${{ needs.validate-inputs.outputs.release_version }})" >> $GITHUB_STEP_SUMMARY
+            echo "- [🏷️ Release Tag](https://github.com/${{ github.repository }}/releases/tag/${PUSHED_TAG})" >> $GITHUB_STEP_SUMMARY
             echo "- [🚀 CI/CD Pipeline](https://github.com/${{ github.repository }}/actions/workflows/ci-cd.yml)" >> $GITHUB_STEP_SUMMARY
           fi
 
