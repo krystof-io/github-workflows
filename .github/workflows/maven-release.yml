@@ -38,11 +38,6 @@ on:
       MAVEN_REPO_PASSWORD:
         required: true
 
-# Permissions needed for the workflow to create releases and push tags
-permissions:
-  contents: write
-  pull-requests: write
-
 jobs:
   # Validate inputs
   validate-inputs:
@@ -317,186 +312,98 @@ jobs:
           echo "Recent commits:"
           git log --oneline -5
           echo ""
-          echo "Available tags:"
-          git tag -l | sort -V | tail -5
-          echo ""
-          echo "Tag to push: ${TAG_TO_PUSH}"
-          
-          # Verify the tag exists locally
-          if ! git tag -l | grep -q "^${TAG_TO_PUSH}$"; then
-            echo "❌ Tag ${TAG_TO_PUSH} does not exist locally!"
-            echo "Available tags:"
-            git tag -l
-            exit 1
-          fi
-          
-          # Show tag details
-          echo "Tag details:"
-          git show "${TAG_TO_PUSH}" --no-patch --format="Tag: %D%nCommit: %H%nAuthor: %an <%ae>%nDate: %ad%nMessage: %s"
+          echo "Tags to push:"
+          echo "  ${TAG_TO_PUSH}"
+          git tag -l "${TAG_TO_PUSH}"
           
           # Push the release branch with version changes
-          echo "🔄 Pushing release branch..."
-          if git push origin HEAD; then
-            echo "✅ Successfully pushed release branch"
-          else
-            echo "❌ Failed to push release branch"
-            exit 1
-          fi
+          git push origin HEAD
           
           # Push the release tag
-          echo "🏷️  Pushing tag ${TAG_TO_PUSH}..."
-          if git push origin "${TAG_TO_PUSH}"; then
-            echo "✅ Successfully pushed tag ${TAG_TO_PUSH}"
-            
-            # Verify tag was pushed by checking remote
-            echo "🔍 Verifying tag was pushed to remote..."
-            if git ls-remote --tags origin | grep -q "refs/tags/${TAG_TO_PUSH}$"; then
-              echo "✅ Tag ${TAG_TO_PUSH} confirmed on remote"
-            else
-              echo "⚠️  Tag push appeared successful but tag not found on remote"
-              echo "Remote tags:"
-              git ls-remote --tags origin | tail -5
-            fi
-          else
-            echo "❌ Failed to push tag ${TAG_TO_PUSH}"
-            exit 1
-          fi
+          git push origin "${TAG_TO_PUSH}"
           
+          echo "✅ Successfully pushed release ${TAG_TO_PUSH}"
           echo "PUSHED_TAG=${TAG_TO_PUSH}" >> $GITHUB_ENV
 
-      - name: Verify tag visibility
-        if: ${{ !inputs.dry_run }}
-        uses: actions/github-script@v7
-        env:
-          PUSHED_TAG: ${{ env.PUSHED_TAG }}
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const tagName = process.env.PUSHED_TAG;
+    #   - name: Create Pull Request
+    #     if: ${{ !inputs.dry_run }}
+    #     uses: actions/github-script@v7
+    #     env:
+    #       FINAL_RELEASE_VERSION: ${{ env.FINAL_RELEASE_VERSION }}
+    #       FINAL_NEXT_VERSION: ${{ env.FINAL_NEXT_VERSION }}
+    #       PUSHED_TAG: ${{ env.PUSHED_TAG }}
+    #     with:
+    #       github-token: ${{ secrets.GITHUB_TOKEN }}
+    #       script: |
+    #         // Use environment variables or fallback to inputs
+    #         const releaseVersion = process.env.FINAL_RELEASE_VERSION || '${{ needs.validate-inputs.outputs.release_version }}' || 'auto-determined';
+    #         const nextVersion = process.env.FINAL_NEXT_VERSION || '${{ needs.validate-inputs.outputs.next_version }}' || 'auto-determined';
+    #         const pushedTag = process.env.PUSHED_TAG || `v${releaseVersion}`;
+    #         const branchName = `release/${releaseVersion}`;
             
-            console.log(`🔍 Verifying tag ${tagName} is visible on GitHub...`);
+    #         try {
+    #           const { data: pullRequest } = await github.rest.pulls.create({
+    #             owner: context.repo.owner,
+    #             repo: context.repo.repo,
+    #             title: `Release ${appName} ${releaseVersion}`,
+    #             head: branchName,
+    #             base: 'main',
+    #             body: `## 🚀 Release ${releaseVersion}
             
-            try {
-              // Check if the tag exists via GitHub API
-              const { data: tag } = await github.rest.git.getRef({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                ref: `tags/${tagName}`
-              });
+    #         This PR contains the version updates from the Maven release process:
+            
+    #         ### 📦 Application Details
+    #         - **Maven Profiles**: ${{ inputs.maven_profiles || 'none' }}
+            
+    #         ### 🔄 Version Changes
+    #         - ✅ **Released Version**: ${releaseVersion}
+    #         - ✅ **Created Tag**: \`v${releaseVersion}\`
+    #         - ✅ **Next Development Version**: ${nextVersion}
+            
+    #         ### 🎯 What Happens Next
+    #         1. **🚀 Automatic Deployment**: The tag \`${pushedTag}\` will trigger the production deployment pipeline
+    #         2. **🔀 Merge This PR**: This will update the main branch with the new development version
+    #         3. **📝 GitHub Release**: A GitHub release will be automatically created from the tag
+            
+    #         ### 📋 Release Checklist
+    #         - [ ] Review the version changes in this PR
+    #         - [ ] Verify the production deployment completed successfully
+    #         - [ ] Update release notes in the GitHub release
+    #         - [ ] Notify stakeholders of the new release
+            
+    #         ### 🔗 Quick Links
+    #         - [CI/CD Pipeline](../../actions/workflows/ci-cd.yml)
+    #         - [Release Tag](../../releases/tag/${pushedTag})
+    #         - [Production Monitoring](#) <!-- Add your monitoring links -->
+            
+    #         ---
+    #         *This PR was automatically created by the Maven Release workflow*`,
+    #             draft: false
+    #           });
               
-              console.log(`✅ Tag ${tagName} is visible on GitHub`);
-              console.log(`Tag SHA: ${tag.object.sha}`);
-              console.log(`Tag URL: https://github.com/${context.repo.owner}/${context.repo.repo}/releases/tag/${tagName}`);
+    #           console.log(`✅ Created PR #${pullRequest.number}: ${pullRequest.html_url}`);
               
-            } catch (error) {
-              if (error.status === 404) {
-                console.error(`❌ Tag ${tagName} not found on GitHub!`);
-                console.log('This could indicate:');
-                console.log('1. Insufficient permissions for GITHUB_TOKEN');
-                console.log('2. Branch protection rules preventing tag push');
-                console.log('3. Repository settings blocking tag creation');
-                
-                // List recent tags to help debug
-                try {
-                  const { data: tags } = await github.rest.repos.listTags({
-                    owner: context.repo.owner,
-                    repo: context.repo.repo,
-                    per_page: 10
-                  });
-                  
-                  console.log('\nRecent tags on GitHub:');
-                  tags.forEach(tag => {
-                    console.log(`  - ${tag.name} (${tag.commit.sha.substring(0, 7)})`);
-                  });
-                } catch (listError) {
-                  console.log('Could not list tags:', listError.message);
-                }
-                
-                throw new Error(`Tag ${tagName} was not created on GitHub`);
-              } else {
-                throw error;
-              }
-            }
-
-      - name: Create Pull Request
-        if: ${{ !inputs.dry_run }}
-        uses: actions/github-script@v7
-        env:
-          FINAL_RELEASE_VERSION: ${{ env.FINAL_RELEASE_VERSION }}
-          FINAL_NEXT_VERSION: ${{ env.FINAL_NEXT_VERSION }}
-          PUSHED_TAG: ${{ env.PUSHED_TAG }}
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            // Use environment variables or fallback to inputs
-            const releaseVersion = process.env.FINAL_RELEASE_VERSION || '${{ needs.validate-inputs.outputs.release_version }}' || 'auto-determined';
-            const nextVersion = process.env.FINAL_NEXT_VERSION || '${{ needs.validate-inputs.outputs.next_version }}' || 'auto-determined';
-            const pushedTag = process.env.PUSHED_TAG || `v${releaseVersion}`;
-            const branchName = `release/${releaseVersion}`;
-            
-            try {
-              const { data: pullRequest } = await github.rest.pulls.create({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                title: `Release ${appName} ${releaseVersion}`,
-                head: branchName,
-                base: 'main',
-                body: `## 🚀 Release ${releaseVersion}
-            
-            This PR contains the version updates from the Maven release process:
-            
-            ### 📦 Application Details
-            - **Maven Profiles**: ${{ inputs.maven_profiles || 'none' }}
-            
-            ### 🔄 Version Changes
-            - ✅ **Released Version**: ${releaseVersion}
-            - ✅ **Created Tag**: \`v${releaseVersion}\`
-            - ✅ **Next Development Version**: ${nextVersion}
-            
-            ### 🎯 What Happens Next
-            1. **🚀 Automatic Deployment**: The tag \`${pushedTag}\` will trigger the production deployment pipeline
-            2. **🔀 Merge This PR**: This will update the main branch with the new development version
-            3. **📝 GitHub Release**: A GitHub release will be automatically created from the tag
-            
-            ### 📋 Release Checklist
-            - [ ] Review the version changes in this PR
-            - [ ] Verify the production deployment completed successfully
-            - [ ] Update release notes in the GitHub release
-            - [ ] Notify stakeholders of the new release
-            
-            ### 🔗 Quick Links
-            - [CI/CD Pipeline](../../actions/workflows/ci-cd.yml)
-            - [Release Tag](../../releases/tag/${pushedTag})
-            - [Production Monitoring](#) <!-- Add your monitoring links -->
-            
-            ---
-            *This PR was automatically created by the Maven Release workflow*`,
-                draft: false
-              });
+    #           // Add labels
+    #           try {
+    #             await github.rest.issues.addLabels({
+    #               owner: context.repo.owner,
+    #               repo: context.repo.repo,
+    #               issue_number: pullRequest.number,
+    #               labels: ['release', 'automated', appName]
+    #             });
+    #             console.log('✅ Added labels to PR');
+    #           } catch (labelError) {
+    #             console.log('ℹ️  Could not add labels (labels may not exist):', labelError.message);
+    #           }
               
-              console.log(`✅ Created PR #${pullRequest.number}: ${pullRequest.html_url}`);
+    #           // Set output for summary
+    #           core.setOutput('pr_number', pullRequest.number);
+    #           core.setOutput('pr_url', pullRequest.html_url);
               
-              // Add labels
-              try {
-                await github.rest.issues.addLabels({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  issue_number: pullRequest.number,
-                  labels: ['release', 'automated', appName]
-                });
-                console.log('✅ Added labels to PR');
-              } catch (labelError) {
-                console.log('ℹ️  Could not add labels (labels may not exist):', labelError.message);
-              }
-              
-              // Set output for summary
-              core.setOutput('pr_number', pullRequest.number);
-              core.setOutput('pr_url', pullRequest.html_url);
-              
-            } catch (error) {
-              console.error('❌ Error creating PR:', error);
-              throw error;
-            }
+    #         } catch (error) {
+    #           console.error('❌ Error creating PR:', error);
+    #           throw error;
+    #         }
 
       - name: Generate release summary
         if: always()
