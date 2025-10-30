@@ -337,11 +337,10 @@ jobs:
           FINAL_NEXT_VERSION: ${{ env.FINAL_NEXT_VERSION }}
           PUSHED_TAG: ${{ env.PUSHED_TAG }}
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            // Use environment variables or fallback to inputs
-            const releaseVersion = process.env.FINAL_RELEASE_VERSION || '${{ needs.validate-inputs.outputs.release_version }}' || 'auto-determined';
-            const nextVersion = process.env.FINAL_NEXT_VERSION || '${{ needs.validate-inputs.outputs.next_version }}' || 'auto-determined';
+            // Use environment variables (should always be set by the Maven release step)
+            const releaseVersion = process.env.FINAL_RELEASE_VERSION || 'auto-determined';
+            const nextVersion = process.env.FINAL_NEXT_VERSION || 'auto-determined';
             const pushedTag = process.env.PUSHED_TAG || `v${releaseVersion}`;
             const branchName = `release/${releaseVersion}`;
             
@@ -428,10 +427,10 @@ jobs:
             fi
           else
             echo "### 🚀 Release Completed Successfully" >> $GITHUB_STEP_SUMMARY
-            echo "- **Released Version**: ${FINAL_RELEASE_VERSION:-${{ needs.validate-inputs.outputs.release_version }}}" >> $GITHUB_STEP_SUMMARY
-            echo "- **Git Tag**: ${PUSHED_TAG:-v${{ needs.validate-inputs.outputs.release_version }}}" >> $GITHUB_STEP_SUMMARY
-            echo "- **Next Dev Version**: ${FINAL_NEXT_VERSION:-${{ needs.validate-inputs.outputs.next_version }}}" >> $GITHUB_STEP_SUMMARY
-            echo "- **Release Branch**: release/${FINAL_RELEASE_VERSION:-${{ needs.validate-inputs.outputs.release_version }}}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Released Version**: ${FINAL_RELEASE_VERSION:-unknown}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Git Tag**: ${PUSHED_TAG:-unknown}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Next Dev Version**: ${FINAL_NEXT_VERSION:-unknown}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Release Branch**: release/${FINAL_RELEASE_VERSION:-unknown}" >> $GITHUB_STEP_SUMMARY
             
             if [[ "${{ needs.validate-inputs.outputs.use_version_overrides }}" == "true" ]]; then
               echo "- **Versioning**: Used version overrides" >> $GITHUB_STEP_SUMMARY
