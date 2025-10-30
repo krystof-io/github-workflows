@@ -377,6 +377,7 @@ jobs:
               #just add the app name to the resources list in kustomization.yaml using yq
               yq eval ".resources += [\"${APP_NAME}\"]" -i kustomization.yaml
               echo "Added ${APP_NAME} to kustomization at ${NAMESPACE_PATH}/kustomization.yaml"
+              cat kustomization.yaml
               cd -
             else 
               echo "${APP_NAME} already present in kustomization at ${NAMESPACE_PATH}/kustomization.yaml"
