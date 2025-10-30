@@ -351,85 +351,85 @@ jobs:
           
           echo "PUSHED_TAG=${TAG_TO_PUSH}" >> $GITHUB_ENV
 
-    #   - name: Create Pull Request
-    #     if: ${{ !inputs.dry_run }}
-    #     uses: actions/github-script@v7
-    #     env:
-    #       FINAL_RELEASE_VERSION: ${{ env.FINAL_RELEASE_VERSION }}
-    #       FINAL_NEXT_VERSION: ${{ env.FINAL_NEXT_VERSION }}
-    #       PUSHED_TAG: ${{ env.PUSHED_TAG }}
-    #     with:
-    #       github-token: ${{ secrets.GITHUB_TOKEN }}
-    #       script: |
-    #         // Use environment variables or fallback to inputs
-    #         const releaseVersion = process.env.FINAL_RELEASE_VERSION || '${{ needs.validate-inputs.outputs.release_version }}' || 'auto-determined';
-    #         const nextVersion = process.env.FINAL_NEXT_VERSION || '${{ needs.validate-inputs.outputs.next_version }}' || 'auto-determined';
-    #         const pushedTag = process.env.PUSHED_TAG || `v${releaseVersion}`;
-    #         const branchName = `release/${releaseVersion}`;
+      - name: Create Pull Request
+        if: ${{ !inputs.dry_run }}
+        uses: actions/github-script@v7
+        env:
+          FINAL_RELEASE_VERSION: ${{ env.FINAL_RELEASE_VERSION }}
+          FINAL_NEXT_VERSION: ${{ env.FINAL_NEXT_VERSION }}
+          PUSHED_TAG: ${{ env.PUSHED_TAG }}
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            // Use environment variables or fallback to inputs
+            const releaseVersion = process.env.FINAL_RELEASE_VERSION || '${{ needs.validate-inputs.outputs.release_version }}' || 'auto-determined';
+            const nextVersion = process.env.FINAL_NEXT_VERSION || '${{ needs.validate-inputs.outputs.next_version }}' || 'auto-determined';
+            const pushedTag = process.env.PUSHED_TAG || `v${releaseVersion}`;
+            const branchName = `release/${releaseVersion}`;
             
-    #         try {
-    #           const { data: pullRequest } = await github.rest.pulls.create({
-    #             owner: context.repo.owner,
-    #             repo: context.repo.repo,
-    #             title: `Release ${appName} ${releaseVersion}`,
-    #             head: branchName,
-    #             base: 'main',
-    #             body: `## 🚀 Release ${releaseVersion}
+            try {
+              const { data: pullRequest } = await github.rest.pulls.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: `Release ${releaseVersion}`,
+                head: branchName,
+                base: 'main',
+                body: `## 🚀 Release ${releaseVersion}
             
-    #         This PR contains the version updates from the Maven release process:
+            This PR contains the version updates from the Maven release process:
             
-    #         ### 📦 Application Details
-    #         - **Maven Profiles**: ${{ inputs.maven_profiles || 'none' }}
+            ### 📦 Application Details
+            - **Maven Profiles**: ${{ inputs.maven_profiles || 'none' }}
             
-    #         ### 🔄 Version Changes
-    #         - ✅ **Released Version**: ${releaseVersion}
-    #         - ✅ **Created Tag**: \`v${releaseVersion}\`
-    #         - ✅ **Next Development Version**: ${nextVersion}
+            ### 🔄 Version Changes
+            - ✅ **Released Version**: ${releaseVersion}
+            - ✅ **Created Tag**: \`v${releaseVersion}\`
+            - ✅ **Next Development Version**: ${nextVersion}
             
-    #         ### 🎯 What Happens Next
-    #         1. **🚀 Automatic Deployment**: The tag \`${pushedTag}\` will trigger the production deployment pipeline
-    #         2. **🔀 Merge This PR**: This will update the main branch with the new development version
-    #         3. **📝 GitHub Release**: A GitHub release will be automatically created from the tag
+            ### 🎯 What Happens Next
+            1. **🚀 Automatic Deployment**: The tag \`${pushedTag}\` will trigger the production deployment pipeline
+            2. **🔀 Merge This PR**: This will update the main branch with the new development version
+            3. **📝 GitHub Release**: A GitHub release will be automatically created from the tag
             
-    #         ### 📋 Release Checklist
-    #         - [ ] Review the version changes in this PR
-    #         - [ ] Verify the production deployment completed successfully
-    #         - [ ] Update release notes in the GitHub release
-    #         - [ ] Notify stakeholders of the new release
+            ### 📋 Release Checklist
+            - [ ] Review the version changes in this PR
+            - [ ] Verify the production deployment completed successfully
+            - [ ] Update release notes in the GitHub release
+            - [ ] Notify stakeholders of the new release
             
-    #         ### 🔗 Quick Links
-    #         - [CI/CD Pipeline](../../actions/workflows/ci-cd.yml)
-    #         - [Release Tag](../../releases/tag/${pushedTag})
-    #         - [Production Monitoring](#) <!-- Add your monitoring links -->
+            ### 🔗 Quick Links
+            - [CI/CD Pipeline](../../actions/workflows/ci-cd.yml)
+            - [Release Tag](../../releases/tag/${pushedTag})
+            - [Production Monitoring](#) <!-- Add your monitoring links -->
             
-    #         ---
-    #         *This PR was automatically created by the Maven Release workflow*`,
-    #             draft: false
-    #           });
+            ---
+            *This PR was automatically created by the Maven Release workflow*`,
+                draft: false
+              });
               
-    #           console.log(`✅ Created PR #${pullRequest.number}: ${pullRequest.html_url}`);
+              console.log(`✅ Created PR #${pullRequest.number}: ${pullRequest.html_url}`);
               
-    #           // Add labels
-    #           try {
-    #             await github.rest.issues.addLabels({
-    #               owner: context.repo.owner,
-    #               repo: context.repo.repo,
-    #               issue_number: pullRequest.number,
-    #               labels: ['release', 'automated', appName]
-    #             });
-    #             console.log('✅ Added labels to PR');
-    #           } catch (labelError) {
-    #             console.log('ℹ️  Could not add labels (labels may not exist):', labelError.message);
-    #           }
+              // Add labels
+              try {
+                await github.rest.issues.addLabels({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: pullRequest.number,
+                  labels: ['release', 'automated']
+                });
+                console.log('✅ Added labels to PR');
+              } catch (labelError) {
+                console.log('ℹ️  Could not add labels (labels may not exist):', labelError.message);
+              }
               
-    #           // Set output for summary
-    #           core.setOutput('pr_number', pullRequest.number);
-    #           core.setOutput('pr_url', pullRequest.html_url);
+              // Set output for summary
+              core.setOutput('pr_number', pullRequest.number);
+              core.setOutput('pr_url', pullRequest.html_url);
               
-    #         } catch (error) {
-    #           console.error('❌ Error creating PR:', error);
-    #           throw error;
-    #         }
+            } catch (error) {
+              console.error('❌ Error creating PR:', error);
+              throw error;
+            }
 
       - name: Generate release summary
         if: always()
