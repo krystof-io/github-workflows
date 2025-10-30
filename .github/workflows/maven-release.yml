@@ -174,6 +174,7 @@ jobs:
           BRANCH_NAME="release/${RELEASE_VERSION}"
           
           echo "📝 Creating release branch: ${BRANCH_NAME}"
+          echo "📝 Will create tag: v${RELEASE_VERSION}"
           git checkout -b "${BRANCH_NAME}"
           git push origin "${BRANCH_NAME}"
           
@@ -208,12 +209,18 @@ jobs:
               -DpushChanges=false \
               ${PROFILES}
           else
-            echo "Would release: Maven will determine automatically"
+            # Determine what Maven would use as release version
+            CURRENT_VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
+            AUTO_RELEASE_VERSION=${CURRENT_VERSION%-SNAPSHOT}
+            
+            echo "Would release: ${AUTO_RELEASE_VERSION} (Maven automatic)"
             echo "Next dev version: Maven will determine automatically"
+            echo "Tag format: v${AUTO_RELEASE_VERSION}"
             echo ""
-            echo "Maven release:prepare simulation (automatic versioning):"
+            echo "Maven release:prepare simulation (automatic versioning with v prefix):"
             
             mvn release:prepare -DdryRun=true \
+              -Dtag=v${AUTO_RELEASE_VERSION} \
               -DpushChanges=false \
               ${PROFILES}
           fi
@@ -249,31 +256,31 @@ jobs:
             echo "FINAL_RELEASE_VERSION=${RELEASE_VERSION}" >> $GITHUB_ENV
             echo "FINAL_NEXT_VERSION=${NEXT_VERSION}" >> $GITHUB_ENV
           else
-            echo "Using automatic Maven versioning"
+            echo "Using automatic Maven versioning with v prefix"
             
-            # Maven release:prepare without version overrides (Maven determines versions)
+            # Determine what Maven would use as versions
+            CURRENT_VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
+            AUTO_RELEASE_VERSION=${CURRENT_VERSION%-SNAPSHOT}
+            
+            # Maven release:prepare with explicit tag format to ensure v prefix
             mvn release:prepare \
+              -Dtag=v${AUTO_RELEASE_VERSION} \
               -DpushChanges=false \
               -DremoteTagging=false \
               ${PROFILES}
               
-            # Extract the versions that Maven determined
-            # The tag will be in the format: artifactId-version
-            TAG_NAME=$(git tag --sort=-version:refname | head -1)
-            RELEASE_VERSION=${TAG_NAME#v}  # Remove 'v' prefix if present
-            
-            # Get the new development version from pom.xml
+            # Get the new development version from pom.xml (after release:prepare)
             NEXT_VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
             
             echo "Maven determined versions:"
-            echo "  Release version: ${RELEASE_VERSION}"
+            echo "  Release version: ${AUTO_RELEASE_VERSION}"
             echo "  Next dev version: ${NEXT_VERSION}"
-            echo "  Tag: ${TAG_NAME}"
+            echo "  Tag: v${AUTO_RELEASE_VERSION}"
             
             # Store versions for later steps
-            echo "FINAL_RELEASE_VERSION=${RELEASE_VERSION}" >> $GITHUB_ENV
+            echo "FINAL_RELEASE_VERSION=${AUTO_RELEASE_VERSION}" >> $GITHUB_ENV
             echo "FINAL_NEXT_VERSION=${NEXT_VERSION}" >> $GITHUB_ENV
-            echo "TAG_NAME=${TAG_NAME}" >> $GITHUB_ENV
+            echo "TAG_NAME=v${AUTO_RELEASE_VERSION}" >> $GITHUB_ENV
           fi
           
           echo "✅ Maven release:prepare completed successfully"
@@ -464,9 +471,9 @@ jobs:
             RELEASE_VERSION="${{ needs.validate-inputs.outputs.release_version }}"
             TAG_NAME="v${RELEASE_VERSION}"
           else
-            # Try to find the tag that Maven might have created
-            RELEASE_VERSION=$(git tag --sort=-version:refname | head -1 | sed 's/^v//')
+            # Try to find the tag that Maven created (should always have v prefix now)
             TAG_NAME=$(git tag --sort=-version:refname | head -1)
+            RELEASE_VERSION=${TAG_NAME#v}  # Remove v prefix to get just the version
           fi
           
           BRANCH_NAME="release/${RELEASE_VERSION}"
