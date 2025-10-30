@@ -352,13 +352,6 @@ jobs:
     strategy:
       matrix: ${{ fromJson(needs.build.outputs.clusters_matrix) }}
     steps:
-      - name: Install dependencies
-        run: |
-          # Ensure yq is available
-          if ! command -v yq &> /dev/null; then
-            sudo wget https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/bin/yq
-            sudo chmod +x /usr/bin/yq
-          fi
       
       - name: Update GitOps repo
         run: |
@@ -373,9 +366,25 @@ jobs:
           # Clone GitOps repo
           git clone https://x-access-token:${{ secrets.CICD_TOKEN }}@github.com/${GITOPS_REPO}.git gitops
           cd gitops
-          
+
+          # We expect a root kustomization.yaml in the namespace directory, and will add our app name to the
+          # kustomization.yaml if not already present
+          NAMESPACE_PATH="${CLUSTER_PATH}/${NAMESPACE}"
+
+          if [ -f "${NAMESPACE_PATH}/kustomization.yaml" ]; then
+            if ! grep -q " - ${APP_NAME}$" "${NAMESPACE_PATH}/kustomization.yaml"; then
+              cd "${NAMESPACE_PATH}"
+              #just add the app name to the resources list in kustomization.yaml using yq
+              yq eval ".resources += [\"${APP_NAME}\"]" -i kustomization.yaml
+              echo "Added ${APP_NAME} to kustomization at ${NAMESPACE_PATH}/kustomization.yaml"
+              cd -
+            else 
+              echo "${APP_NAME} already present in kustomization at ${NAMESPACE_PATH}/kustomization.yaml"
+            fi
+          fi
+
           # Update image tag
-          APP_PATH="clusters/${CLUSTER_PATH}/namespaces/${NAMESPACE}/${APP_NAME}"
+          APP_PATH="${CLUSTER_PATH}/${NAMESPACE}/${APP_NAME}"
           
           if [ -f "${APP_PATH}/helmrelease.yaml" ]; then
             # Update Helm release
