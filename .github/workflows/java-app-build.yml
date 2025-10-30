@@ -496,14 +496,14 @@ jobs:
   # Deploy to prod environment (create PR with auto-merge)
   deploy-prod:
     runs-on: arc-runners-javadev
-    needs: [sonar-scan, build-docker-image]
+    needs: [build, sonar-scan, build-docker-image]
     if: startsWith(github.ref, 'refs/tags/v')
     strategy:
-      matrix: ${{ fromJson(needs.setup.outputs.clusters_matrix) }}
+      matrix: ${{ fromJson(needs.build.outputs.clusters_matrix) }}
     steps:
       - name: Validate version is not SNAPSHOT
         run: |
-          VERSION="${{ needs.setup.outputs.version }}"
+          VERSION="${{ needs.build.outputs.version }}"
           if [[ "${VERSION}" == *"SNAPSHOT"* ]]; then
             echo "ERROR: Cannot deploy SNAPSHOT version to production"
             exit 1
@@ -517,9 +517,9 @@ jobs:
           GITOPS_REPO="${{ matrix.gitops_repo }}"
           APP_NAME="${{ inputs.app_name }}"
           NAMESPACE="kio-prod"
-          IMAGE_TAG="${{ needs.setup.outputs.image_tag }}"
+          IMAGE_TAG="${{ needs.build.outputs.image_tag }}"
           CLUSTER_PATH="${{ matrix.cluster_path }}"
-          VERSION="${{ needs.setup.outputs.version }}"
+          VERSION="${{ needs.build.outputs.version }}"
           CLUSTER_NAME="${{ matrix.name }}"
           
           # Clone GitOps repo
@@ -563,13 +563,13 @@ jobs:
             --title "Deploy ${APP_NAME} ${VERSION} to production (${CLUSTER_NAME} cluster)" \
             --body "Automated deployment PR for ${APP_NAME} version ${VERSION}
 
-**Cluster**: ${CLUSTER_NAME}
-**Image**: \`${{ env.IMAGE_REGISTRY_HOST }}/${APP_NAME}:${IMAGE_TAG}\`
-**Target**: ${NAMESPACE} namespace in ${CLUSTER_PATH}
-**Triggered by**: Tag push in ${APP_NAME} repository
-**Tag**: ${{ github.ref }}
+            **Cluster**: ${CLUSTER_NAME}
+            **Image**: \`${{ vars.IMAGE_REGISTRY_HOST }}/${APP_NAME}:${IMAGE_TAG}\`
+            **Target**: ${NAMESPACE} namespace in ${CLUSTER_PATH}
+            **Triggered by**: Tag push in ${APP_NAME} repository
+            **Tag**: ${{ github.ref }}
 
-This PR will auto-merge once all required checks pass." \
+            This PR will auto-merge once all required checks pass." \
             --base main \
             --head "${BRANCH_NAME}"
           
