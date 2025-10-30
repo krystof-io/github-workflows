@@ -265,7 +265,7 @@ Create `~/.m2/settings.xml` on the runner:
 
 1. **Create repository** from template or start fresh
 2. **Add pom.xml** with your application configuration
-3. **Add workflow file** (`.github/workflows/ci-cd.yml`):
+3. **Add CI/CD workflow file** (`.github/workflows/ci-cd.yml`):
    ```yaml
    name: CI/CD Pipeline
    on:
@@ -279,10 +279,57 @@ Create `~/.m2/settings.xml` on the runner:
          app_name: my-new-service
        secrets: inherit
    ```
-4. **Create GitOps manifests** in both cluster repos (if deploying to both)
-5. **Push to main** - your app will build and deploy to dev!
+4. **Add Maven release workflow file** (`.github/workflows/release.yml`):
+   ```yaml
+   name: Maven Release
+   on:
+     workflow_dispatch:
+       inputs:
+         release_version:
+           description: 'Release version (e.g., 1.0.0)'
+           required: true
+           type: string
+         next_development_version:
+           description: 'Next development version (e.g., 1.1.0-SNAPSHOT)'
+           required: true
+           type: string
+         dry_run:
+           description: 'Perform a dry run (no actual release)'
+           required: false
+           type: boolean
+           default: false
+   jobs:
+     maven-release:
+       uses: krystof-io/github-workflows/.github/workflows/maven-release.yml@main
+       with:
+         app_name: my-new-service
+         release_version: ${{ github.event.inputs.release_version }}
+         next_development_version: ${{ github.event.inputs.next_development_version }}
+         dry_run: ${{ github.event.inputs.dry_run }}
+       secrets: inherit
+   ```
+5. **Create GitOps manifests** in both cluster repos (if deploying to both)
+6. **Push to main** - your app will build and deploy to dev!
 
 ### Creating a Release
+
+There are two ways to create releases:
+
+#### Option 1: GitHub Actions Workflow (Recommended)
+
+1. **Navigate to Actions tab** in your repository
+2. **Select "Maven Release" workflow**
+3. **Click "Run workflow"**
+4. **Fill in parameters**:
+   - Release version: `1.0.0`
+   - Next development version: `1.1.0-SNAPSHOT`
+   - Dry run: Check for testing first
+5. **Review the results**:
+   - Creates git tag (e.g., `v1.0.0`)
+   - Creates PR with version updates
+   - Automatic production deployment triggered by tag
+
+#### Option 2: Manual Maven Release (Traditional)
 
 1. **Ensure main branch is stable** and all tests pass
 2. **Run Maven release**:
@@ -294,11 +341,20 @@ Create `~/.m2/settings.xml` on the runner:
    - Create git tag (e.g., `v1.0.0`)
    - Push tag to GitHub
    - Bump version to next SNAPSHOT
-4. **Tag push triggers workflow** which:
+
+#### What Happens After Release (Both Methods)
+
+4. **Tag push triggers CI/CD workflow** which:
    - Builds Docker image with release version
    - Creates PR in GitOps repo(s) for production
 5. **Review and merge PR** (or wait for auto-merge if checks pass)
 6. **Flux deploys** to production automatically
+
+#### GitHub Release Creation
+
+The `github-release.yml` workflow automatically creates GitHub releases when tags are pushed, including:
+- Release notes from git commits
+- JAR file as downloadable artifact
 
 ### Branch Strategy
 
