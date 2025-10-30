@@ -377,7 +377,6 @@ jobs:
               #just add the app name to the resources list in kustomization.yaml using yq
               yq eval ".resources += [\"${APP_NAME}\"]" -i kustomization.yaml
               echo "Added ${APP_NAME} to kustomization at ${NAMESPACE_PATH}/kustomization.yaml"
-              cat kustomization.yaml
               cd -
             else 
               echo "${APP_NAME} already present in kustomization at ${NAMESPACE_PATH}/kustomization.yaml"
@@ -387,19 +386,11 @@ jobs:
           # Update image tag
           APP_PATH="${CLUSTER_PATH}/${NAMESPACE}/${APP_NAME}"
           
-          if [ -f "${APP_PATH}/helmrelease.yaml" ]; then
-            # Update Helm release
-            yq eval ".spec.values.image.tag = \"${IMAGE_TAG}\"" -i "${APP_PATH}/helmrelease.yaml"
-            echo "Updated HelmRelease at ${APP_PATH}/helmrelease.yaml"
-          elif [ -f "${APP_PATH}/kustomization.yaml" ]; then
-            # Update Kustomization
-            cd "${APP_PATH}"
-            kustomize edit set image "${APP_NAME}=${{ vars.IMAGE_REGISTRY_HOST }}/${APP_NAME}:${IMAGE_TAG}"
-            echo "Updated Kustomization at ${APP_PATH}/kustomization.yaml"
-            cd -
-          else
-            echo "ERROR: No helmrelease.yaml or kustomization.yaml found at ${APP_PATH}"
-            exit 1
+          #We store our helm values in ${APP_NAME}-values.yaml
+          if [ -f "${APP_PATH}/${APP_NAME}-values.yaml" ]; then
+            # Update Helm values
+            yq eval ".image.tag = \"${IMAGE_TAG}\"" -i "${APP_PATH}/${APP_NAME}-values.yaml"
+            echo "Updated Helm values at ${APP_PATH}/${APP_NAME}-values.yaml"
           fi
           
           # # Commit and push
