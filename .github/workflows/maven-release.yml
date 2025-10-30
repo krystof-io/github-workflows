@@ -1,7 +1,9 @@
 # Reusable workflow for Maven releases of Java applications
 # Location: github-workflows repo at .github/workflows/maven-release.yml
-#mvn release:clean && sleep 1 && mvn -B clean release:prepare -DdryRun=true -Dresume=false && sleep 1 &&mvn release:clean
-#mvn release:clean && sleep 1 && mvn -B release:prepare -DpreparationGoals=validate && sleep 1 && git push --tags && sleep 1 && git push && sleep 1 && git push --tags --dry-run && sleep 1 && mvn release:clean        
+#mvn release:clean && sleep 1 && mvn -B clean release:prepare -DdryRun=true -Dresume=false 
+    #&& sleep 1 &&mvn release:clean
+#mvn release:clean && sleep 1 && mvn -B release:prepare -DpreparationGoals=validate 
+    #&& sleep 1 && git push --tags && sleep 1 && git push && sleep 1 && git push --tags --dry-run && sleep 1 && mvn release:clean        
 
 name: Maven Release
 
@@ -319,10 +321,37 @@ jobs:
           # Push the release branch with version changes
           git push origin HEAD
           
-          # Push the release tag
-          git push origin "${TAG_TO_PUSH}"
+          # Push the release tag with verbose output
+          echo "🏷️  Pushing tag ${TAG_TO_PUSH}..."
+          if git push -v origin "${TAG_TO_PUSH}"; then
+            echo "✅ Git push command completed"
+            
+            # Verify tag actually exists on remote
+            echo "🔍 Verifying tag exists on remote..."
+            sleep 2  # Give GitHub a moment to process
+            
+            if git ls-remote --tags origin | grep -q "refs/tags/${TAG_TO_PUSH}$"; then
+              echo "✅ Tag ${TAG_TO_PUSH} confirmed on remote"
+            else
+              echo "❌ Tag push succeeded locally but tag not found on remote!"
+              echo "This indicates a permissions or authentication issue."
+              echo ""
+              echo "Remote tags currently available:"
+              git ls-remote --tags origin | tail -10
+              echo ""
+              echo "Checking authentication status..."
+              git remote -v
+              echo ""
+              echo "Testing write access with a simple push..."
+              # Test if we can push anything at all
+              git push --dry-run origin HEAD 2>&1 || echo "Push test failed"
+              exit 1
+            fi
+          else
+            echo "❌ Git push command failed"
+            exit 1
+          fi
           
-          echo "✅ Successfully pushed release ${TAG_TO_PUSH}"
           echo "PUSHED_TAG=${TAG_TO_PUSH}" >> $GITHUB_ENV
 
     #   - name: Create Pull Request
