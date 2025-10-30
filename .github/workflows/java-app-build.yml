@@ -492,99 +492,88 @@ jobs:
             echo "💥 Deployment failed after all retry attempts"
             exit 1
           fi
-          
-#   # Deploy to prod environment (create PR with auto-merge)
-#   deploy-prod:
-#     runs-on: arc-runners-javadev
-#     needs: [setup, build-docker-image]
-#     if: startsWith(github.ref, 'refs/tags/v')
-#     strategy:
-#       matrix: ${{ fromJson(needs.setup.outputs.clusters_matrix) }}
-#     steps:
-#       - name: Validate version is not SNAPSHOT
-#         run: |
-#           VERSION="${{ needs.setup.outputs.version }}"
-#           if [[ "${VERSION}" == *"SNAPSHOT"* ]]; then
-#             echo "ERROR: Cannot deploy SNAPSHOT version to production"
-#             exit 1
-#           fi
-#           echo "✅ Version ${VERSION} is valid for production"
-      
-#       - name: Install dependencies
-#         run: |
-#           # Ensure yq and gh are available
-#           if ! command -v yq &> /dev/null; then
-#             sudo wget https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/bin/yq
-#             sudo chmod +x /usr/bin/yq
-#           fi
-#           if ! command -v gh &> /dev/null; then
-#             curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
-#             echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
-#             sudo apt update
-#             sudo apt install gh -y
-#           fi
-      
-#       - name: Create GitOps PR
-#         run: |
-#           set -e
-          
-#           GITOPS_REPO="${{ matrix.gitops_repo }}"
-#           APP_NAME="${{ inputs.app_name }}"
-#           NAMESPACE="kio-prod"
-#           IMAGE_TAG="${{ needs.setup.outputs.image_tag }}"
-#           CLUSTER_PATH="${{ matrix.cluster_path }}"
-#           VERSION="${{ needs.setup.outputs.version }}"
-#           CLUSTER_NAME="${{ matrix.name }}"
-          
-#           # Clone GitOps repo
-#           git clone https://x-access-token:${{ secrets.CICD_TOKEN }}@github.com/${GITOPS_REPO}.git gitops
-#           cd gitops
-          
-#           # Create feature branch
-#           BRANCH_NAME="deploy/${APP_NAME}/${VERSION}-${CLUSTER_NAME}"
-#           git checkout -b "${BRANCH_NAME}"
-          
-#           # Update image tag
-#           APP_PATH="clusters/${CLUSTER_PATH}/namespaces/${NAMESPACE}/${APP_NAME}"
-          
-#           if [ -f "${APP_PATH}/helmrelease.yaml" ]; then
-#             yq eval ".spec.values.image.tag = \"${IMAGE_TAG}\"" -i "${APP_PATH}/helmrelease.yaml"
-#             echo "Updated HelmRelease at ${APP_PATH}/helmrelease.yaml"
-#           elif [ -f "${APP_PATH}/kustomization.yaml" ]; then
-#             cd "${APP_PATH}"
-#             kustomize edit set image "${APP_NAME}=${{ env.IMAGE_REGISTRY_HOST }}/${APP_NAME}:${IMAGE_TAG}"
-#             echo "Updated Kustomization at ${APP_PATH}/kustomization.yaml"
-#             cd -
-#           else
-#             echo "ERROR: No helmrelease.yaml or kustomization.yaml found at ${APP_PATH}"
-#             exit 1
-#           fi
-          
-#           # Commit and push branch
-#           git config user.name "${{ secrets.CICD_USER_NAME }}"
-#           git config user.email "${{ secrets.CICD_USER_EMAIL }}"
-#           git add .
-#           git commit -m "Deploy ${APP_NAME} ${VERSION} to ${NAMESPACE} on ${CLUSTER_NAME}"
-#           git push origin "${BRANCH_NAME}"
-          
-#           # Create Pull Request using GitHub CLI
-#           export GITHUB_TOKEN="${{ secrets.CICD_TOKEN }}"
-#           gh pr create \
-#             --repo "${GITOPS_REPO}" \
-#             --title "Deploy ${APP_NAME} ${VERSION} to production (${CLUSTER_NAME} cluster)" \
-#             --body "Automated deployment PR for ${APP_NAME} version ${VERSION}
 
-# **Cluster**: ${CLUSTER_NAME}
-# **Image**: \`${{ env.IMAGE_REGISTRY_HOST }}/${APP_NAME}:${IMAGE_TAG}\`
-# **Target**: ${NAMESPACE} namespace in ${CLUSTER_PATH}
-# **Triggered by**: Tag push in ${APP_NAME} repository
-# **Tag**: ${{ github.ref }}
+  # Deploy to prod environment (create PR with auto-merge)
+  deploy-prod:
+    runs-on: arc-runners-javadev
+    needs: [setup, build-docker-image]
+    if: startsWith(github.ref, 'refs/tags/v')
+    strategy:
+      matrix: ${{ fromJson(needs.setup.outputs.clusters_matrix) }}
+    steps:
+      - name: Validate version is not SNAPSHOT
+        run: |
+          VERSION="${{ needs.setup.outputs.version }}"
+          if [[ "${VERSION}" == *"SNAPSHOT"* ]]; then
+            echo "ERROR: Cannot deploy SNAPSHOT version to production"
+            exit 1
+          fi
+          echo "✅ Version ${VERSION} is valid for production"
+      
+      - name: Create GitOps PR
+        run: |
+          set -e
+          
+          GITOPS_REPO="${{ matrix.gitops_repo }}"
+          APP_NAME="${{ inputs.app_name }}"
+          NAMESPACE="kio-prod"
+          IMAGE_TAG="${{ needs.setup.outputs.image_tag }}"
+          CLUSTER_PATH="${{ matrix.cluster_path }}"
+          VERSION="${{ needs.setup.outputs.version }}"
+          CLUSTER_NAME="${{ matrix.name }}"
+          
+          # Clone GitOps repo
+          git clone https://x-access-token:${{ secrets.CICD_TOKEN }}@github.com/${GITOPS_REPO}.git gitops
+          cd gitops
+          
+          # Create feature branch
+          BRANCH_NAME="deploy/${APP_NAME}/${VERSION}-${CLUSTER_NAME}"
+          git checkout -b "${BRANCH_NAME}"
+          
+          # Update image tag
+          APP_PATH="clusters/${CLUSTER_PATH}/namespaces/${NAMESPACE}/${APP_NAME}"
+          
+          # We store our helm values in ${APP_NAME}-values.yaml
+          if [ -f "${APP_PATH}/${APP_NAME}-values.yaml" ]; then
+            # Check if tag is already current
+            CURRENT_TAG=$(yq eval ".image.tag" "${APP_PATH}/${APP_NAME}-values.yaml" 2>/dev/null || echo "none")
+            if [ "$CURRENT_TAG" = "$IMAGE_TAG" ]; then
+              echo "ℹ️  Image tag ${IMAGE_TAG} is already current in ${APP_PATH}/${APP_NAME}-values.yaml"
+              return 0
+            fi
+            
+            # Update Helm values
+            yq eval ".image.tag = \"${IMAGE_TAG}\"" -i "${APP_PATH}/${APP_NAME}-values.yaml"
+            echo "✅ Updated Helm values at ${APP_PATH}/${APP_NAME}-values.yaml (${CURRENT_TAG} → ${IMAGE_TAG})"
+          else
+            echo "⚠️  No values file found at ${APP_PATH}/${APP_NAME}-values.yaml"
+          fi          
+          
+          # Commit and push branch
+          git config user.name "${{ secrets.CICD_USER_NAME }}"
+          git config user.email "${{ secrets.CICD_USER_EMAIL }}"
+          git add .
+          git commit -m "Deploy ${APP_NAME} ${VERSION} to ${NAMESPACE} on ${CLUSTER_NAME}"
+          git push origin "${BRANCH_NAME}"
+          
+          # Create Pull Request using GitHub CLI
+          export GITHUB_TOKEN="${{ secrets.CICD_TOKEN }}"
+          gh pr create \
+            --repo "${GITOPS_REPO}" \
+            --title "Deploy ${APP_NAME} ${VERSION} to production (${CLUSTER_NAME} cluster)" \
+            --body "Automated deployment PR for ${APP_NAME} version ${VERSION}
 
-# This PR will auto-merge once all required checks pass." \
-#             --base main \
-#             --head "${BRANCH_NAME}"
+**Cluster**: ${CLUSTER_NAME}
+**Image**: \`${{ env.IMAGE_REGISTRY_HOST }}/${APP_NAME}:${IMAGE_TAG}\`
+**Target**: ${NAMESPACE} namespace in ${CLUSTER_PATH}
+**Triggered by**: Tag push in ${APP_NAME} repository
+**Tag**: ${{ github.ref }}
+
+This PR will auto-merge once all required checks pass." \
+            --base main \
+            --head "${BRANCH_NAME}"
           
-#           # Enable auto-merge
-#           gh pr merge "${BRANCH_NAME}" --repo "${GITOPS_REPO}" --auto --squash
+          # Enable auto-merge
+          gh pr merge "${BRANCH_NAME}" --repo "${GITOPS_REPO}" --auto --squash
           
-#           echo "✅ Created PR for ${{ matrix.name }} cluster (prod) with auto-merge enabled"
+          echo "✅ Created PR for ${{ matrix.name }} cluster (prod) with auto-merge enabled"
