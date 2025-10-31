@@ -330,6 +330,7 @@ jobs:
           echo "PUSHED_TAG=${TAG_TO_PUSH}" >> $GITHUB_ENV
 
       - name: Create Pull Request
+        id: create_pr
         if: ${{ !inputs.dry_run }}
         uses: actions/github-script@v7
         env:
@@ -452,7 +453,8 @@ jobs:
           
           if [[ "${{ inputs.dry_run }}" != "true" ]]; then
             echo "- [🏷️ Release Tag](https://github.com/${{ github.repository }}/releases/tag/${PUSHED_TAG})" >> $GITHUB_STEP_SUMMARY
-            echo "- [🚀 CI/CD Pipeline](https://github.com/${{ github.repository }}/actions/workflows/ci-cd.yml)" >> $GITHUB_STEP_SUMMARY
+            echo "- [� Release Pull Request](${{ steps.create_pr.outputs.pr_url }})" >> $GITHUB_STEP_SUMMARY
+            echo "- [�🚀 CI/CD Pipeline](https://github.com/${{ github.repository }}/actions/workflows/ci-cd.yml)" >> $GITHUB_STEP_SUMMARY
           fi
 
   # Cleanup job that runs on failure to clean up any partial state
