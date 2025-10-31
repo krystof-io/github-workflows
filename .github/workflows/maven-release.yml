@@ -337,6 +337,7 @@ jobs:
           FINAL_NEXT_VERSION: ${{ env.FINAL_NEXT_VERSION }}
           PUSHED_TAG: ${{ env.PUSHED_TAG }}
         with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             // Use environment variables (should always be set by the Maven release step)
             const releaseVersion = process.env.FINAL_RELEASE_VERSION || 'auto-determined';
