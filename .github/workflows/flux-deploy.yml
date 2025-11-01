@@ -212,10 +212,11 @@ jobs:
             
             # Enable auto-merge if requested
             if [ "$PR_AUTO_MERGE" = "true" ]; then
-              gh pr merge "${BRANCH_NAME}" --repo "${GITOPS_REPO}" --auto --squash
-              echo "✅ Created PR for ${CLUSTER_NAME} cluster with auto-merge enabled"
+              gh pr merge "${BRANCH_NAME}" --repo "${GITOPS_REPO}" --auto --squash --delete-branch
+              echo "✅ Created PR for ${CLUSTER_NAME} cluster with auto-merge and auto-delete branch enabled"
             else
               echo "✅ Created PR for ${CLUSTER_NAME} cluster (manual merge required)"
+              echo "💡 To enable auto-delete branch, you can run: gh pr merge ${BRANCH_NAME} --repo ${GITOPS_REPO} --squash --delete-branch"
             fi
           }
           
