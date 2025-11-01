@@ -533,50 +533,84 @@ jobs:
       - name: Generate release summary
         if: always()
         run: |
-          echo "## 🎉 Maven Release Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
+          # Check if any previous steps failed
+          WORKFLOW_STATUS="${{ job.status }}"
+          PREVIOUS_STEPS_FAILED="false"
           
-          if [[ "${{ inputs.dry_run }}" == "true" ]]; then
-            echo "### 🔍 Dry Run Completed" >> $GITHUB_STEP_SUMMARY
-            echo "- **Mode**: Simulation only (no changes made)" >> $GITHUB_STEP_SUMMARY
-            echo "- **Current Version**: $(mvn help:evaluate -Dexpression=project.version -q -DforceStdout 2>/dev/null || echo 'unknown')" >> $GITHUB_STEP_SUMMARY
-            
-            if [[ "${{ needs.validate-inputs.outputs.use_version_overrides }}" == "true" ]]; then
-              echo "- **Would Release (Override)**: ${{ needs.validate-inputs.outputs.release_version }}" >> $GITHUB_STEP_SUMMARY
-              echo "- **Next Dev Version (Override)**: ${{ needs.validate-inputs.outputs.next_version }}" >> $GITHUB_STEP_SUMMARY
-            else
-              echo "- **Versioning**: Maven automatic versioning" >> $GITHUB_STEP_SUMMARY
-            fi
-          else
-            echo "### 🚀 Release Completed Successfully" >> $GITHUB_STEP_SUMMARY
-            echo "- **Released Version**: ${FINAL_RELEASE_VERSION:-unknown}" >> $GITHUB_STEP_SUMMARY
-            echo "- **Git Tag**: ${PUSHED_TAG:-unknown}" >> $GITHUB_STEP_SUMMARY
-            echo "- **Next Dev Version**: ${FINAL_NEXT_VERSION:-unknown}" >> $GITHUB_STEP_SUMMARY
-            echo "- **Release Branch**: release/${FINAL_RELEASE_VERSION:-unknown}" >> $GITHUB_STEP_SUMMARY
-            
-            if [[ "${{ needs.validate-inputs.outputs.use_version_overrides }}" == "true" ]]; then
-              echo "- **Versioning**: Used version overrides" >> $GITHUB_STEP_SUMMARY
-            else
-              echo "- **Versioning**: Maven automatic versioning" >> $GITHUB_STEP_SUMMARY
-            fi
+          # Check job context to determine if we should show success or failure summary
+          if [[ "${WORKFLOW_STATUS}" != "success" ]] && [[ "${{ inputs.dry_run }}" != "true" ]]; then
+            PREVIOUS_STEPS_FAILED="true"
+          fi
+          
+          # Generate appropriate summary based on success/failure
+          if [[ "${PREVIOUS_STEPS_FAILED}" == "true" ]]; then
+            echo "## ❌ Maven Release Failed" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
-            echo "### 📋 Next Steps" >> $GITHUB_STEP_SUMMARY
-            echo "1. **🚀 Production Deployment**: Tag \`${PUSHED_TAG}\` will trigger CI/CD pipeline" >> $GITHUB_STEP_SUMMARY
-            echo "2. **🔀 Merge PR**: Review and merge the automatically created PR to update main branch" >> $GITHUB_STEP_SUMMARY
-            echo "3. **📝 Release Notes**: Add release notes to the GitHub release created by the tag" >> $GITHUB_STEP_SUMMARY
-            echo "4. **📊 Monitor**: Check production deployment and application health" >> $GITHUB_STEP_SUMMARY
+            echo "The Maven release process encountered an error and was not completed." >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### 🔍 What to Check" >> $GITHUB_STEP_SUMMARY
+            echo "1. **Review the workflow logs** above for specific error details" >> $GITHUB_STEP_SUMMARY
+            echo "2. **Check for existing releases** - The version may already exist" >> $GITHUB_STEP_SUMMARY
+            echo "3. **Verify repository permissions** - Ensure the workflow can create branches and tags" >> $GITHUB_STEP_SUMMARY
+            echo "4. **Check Maven configuration** - Ensure release plugin is properly configured" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### 🛠️ Next Steps" >> $GITHUB_STEP_SUMMARY
+            echo "1. **📝 Review Error Details**: Check the failed step logs for specific error messages" >> $GITHUB_STEP_SUMMARY
+            echo "2. **🧹 Clean Up**: If needed, clean up any partially created branches or tags" >> $GITHUB_STEP_SUMMARY
+            echo "3. **🔧 Fix Issues**: Address the root cause identified in the logs" >> $GITHUB_STEP_SUMMARY
+            echo "4. **🔄 Retry**: Re-run the release workflow once issues are resolved" >> $GITHUB_STEP_SUMMARY
+            echo "5. **💬 Get Help**: Contact the DevOps team if you need assistance" >> $GITHUB_STEP_SUMMARY
+          else
+            # Success summary (existing logic)
+            echo "## 🎉 Maven Release Summary" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            
+            if [[ "${{ inputs.dry_run }}" == "true" ]]; then
+              echo "### 🔍 Dry Run Completed" >> $GITHUB_STEP_SUMMARY
+              echo "- **Mode**: Simulation only (no changes made)" >> $GITHUB_STEP_SUMMARY
+              echo "- **Current Version**: $(mvn help:evaluate -Dexpression=project.version -q -DforceStdout 2>/dev/null || echo 'unknown')" >> $GITHUB_STEP_SUMMARY
+              
+              if [[ "${{ needs.validate-inputs.outputs.use_version_overrides }}" == "true" ]]; then
+                echo "- **Would Release (Override)**: ${{ needs.validate-inputs.outputs.release_version }}" >> $GITHUB_STEP_SUMMARY
+                echo "- **Next Dev Version (Override)**: ${{ needs.validate-inputs.outputs.next_version }}" >> $GITHUB_STEP_SUMMARY
+              else
+                echo "- **Versioning**: Maven automatic versioning" >> $GITHUB_STEP_SUMMARY
+              fi
+            else
+              echo "### 🚀 Release Completed Successfully" >> $GITHUB_STEP_SUMMARY
+              echo "- **Released Version**: ${FINAL_RELEASE_VERSION:-unknown}" >> $GITHUB_STEP_SUMMARY
+              echo "- **Git Tag**: ${PUSHED_TAG:-unknown}" >> $GITHUB_STEP_SUMMARY
+              echo "- **Next Dev Version**: ${FINAL_NEXT_VERSION:-unknown}" >> $GITHUB_STEP_SUMMARY
+              echo "- **Release Branch**: release/${FINAL_RELEASE_VERSION:-unknown}" >> $GITHUB_STEP_SUMMARY
+              
+              if [[ "${{ needs.validate-inputs.outputs.use_version_overrides }}" == "true" ]]; then
+                echo "- **Versioning**: Used version overrides" >> $GITHUB_STEP_SUMMARY
+              else
+                echo "- **Versioning**: Maven automatic versioning" >> $GITHUB_STEP_SUMMARY
+              fi
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "### 📋 Next Steps" >> $GITHUB_STEP_SUMMARY
+              echo "1. **🚀 Production Deployment**: Tag \`${PUSHED_TAG}\` will trigger CI/CD pipeline" >> $GITHUB_STEP_SUMMARY
+              echo "2. **🔀 Merge PR**: Review and merge the automatically created PR to update main branch" >> $GITHUB_STEP_SUMMARY
+              echo "3. **📝 Release Notes**: Add release notes to the GitHub release created by the tag" >> $GITHUB_STEP_SUMMARY
+              echo "4. **📊 Monitor**: Check production deployment and application health" >> $GITHUB_STEP_SUMMARY
+            fi
           fi
           
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### 🔗 Related Links" >> $GITHUB_STEP_SUMMARY
           echo "- [📋 Actions Run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})" >> $GITHUB_STEP_SUMMARY
           
-          if [[ "${{ inputs.dry_run }}" != "true" ]]; then
+          # Only show release-specific links if the workflow succeeded and it's not a dry run
+          if [[ "${PREVIOUS_STEPS_FAILED}" != "true" ]] && [[ "${{ inputs.dry_run }}" != "true" ]]; then
             echo "- [🏷️ Release Tag](https://github.com/${{ github.repository }}/releases/tag/${PUSHED_TAG})" >> $GITHUB_STEP_SUMMARY
             if [[ -n "${FINAL_RELEASE_VERSION}" ]]; then
               echo "- [🔀 Release Pull Request](https://github.com/${{ github.repository }}/pulls?q=is:pr+head:release/${FINAL_RELEASE_VERSION})" >> $GITHUB_STEP_SUMMARY
             fi
             echo "- [🚀 CI/CD Pipeline](https://github.com/${{ github.repository }}/actions/workflows/ci-cd.yml)" >> $GITHUB_STEP_SUMMARY
+          elif [[ "${PREVIOUS_STEPS_FAILED}" == "true" ]]; then
+            echo "- [📚 Troubleshooting Guide](https://github.com/${{ github.repository }}/wiki/Release-Troubleshooting)" >> $GITHUB_STEP_SUMMARY
+            echo "- [💬 Get Support](https://github.com/${{ github.repository }}/issues/new?template=release-issue.md)" >> $GITHUB_STEP_SUMMARY
           fi
 
   # Cleanup job that runs on failure to clean up any partial state
