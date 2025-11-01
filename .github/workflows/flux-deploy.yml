@@ -1,0 +1,260 @@
+# Reusable workflow for deploying applications via GitOps using Flux
+# Location: github-workflows repo at .github/workflows/flux-deploy.yml
+
+name: Flux GitOps Deploy
+
+on:
+  workflow_call:
+    inputs:
+      app_name:
+        required: true
+        type: string
+        description: 'Name of the application'
+      image_tag:
+        required: true
+        type: string
+        description: 'Docker image tag to deploy'
+      target_namespace:
+        required: true
+        type: string
+        description: 'Target namespace (kio-dev, kio-prod, etc.)'
+      gitops_repo:
+        required: true
+        type: string
+        description: 'GitOps repository (owner/repo)'
+      cluster_path:
+        required: true
+        type: string
+        description: 'Path to cluster configuration in GitOps repo'
+      cluster_name:
+        required: true
+        type: string
+        description: 'Name of the target cluster'
+      deployment_method:
+        required: true
+        type: string
+        description: 'Deployment method: direct-commit or pull-request'
+      commit_message_suffix:
+        default: ''
+        type: string
+        description: 'Additional suffix for commit message'
+      pr_auto_merge:
+        default: false
+        type: boolean
+        description: 'Enable auto-merge for pull requests (only used with pull-request method)'
+    secrets:
+      CICD_TOKEN:
+        required: true
+      CICD_USER_EMAIL:
+        required: true
+      CICD_USER_NAME:
+        required: true
+
+jobs:
+  deploy:
+    runs-on: arc-runners-javadev
+    steps:
+      - name: Deploy via GitOps
+        run: |
+          set -e
+          
+          GITOPS_REPO="${{ inputs.gitops_repo }}"
+          APP_NAME="${{ inputs.app_name }}"
+          NAMESPACE="${{ inputs.target_namespace }}"
+          IMAGE_TAG="${{ inputs.image_tag }}"
+          CLUSTER_PATH="${{ inputs.cluster_path }}"
+          CLUSTER_NAME="${{ inputs.cluster_name }}"
+          DEPLOYMENT_METHOD="${{ inputs.deployment_method }}"
+          COMMIT_SUFFIX="${{ inputs.commit_message_suffix }}"
+          PR_AUTO_MERGE="${{ inputs.pr_auto_merge }}"
+          
+          # Function to apply our specific changes
+          apply_changes() {
+            echo "🔧 Applying changes for ${APP_NAME} deployment..."
+            
+            # We expect a root kustomization.yaml in the namespace directory, and will add our app name to the
+            # kustomization.yaml if not already present
+            NAMESPACE_PATH="${CLUSTER_PATH}/${NAMESPACE}"
+
+            if [ -f "${NAMESPACE_PATH}/kustomization.yaml" ]; then
+              if ! grep -q " - ${APP_NAME}$" "${NAMESPACE_PATH}/kustomization.yaml"; then
+                cd "${NAMESPACE_PATH}"
+                # Just add the app name to the resources list in kustomization.yaml using yq
+                yq eval ".resources += [\"${APP_NAME}\"]" -i kustomization.yaml
+                echo "✅ Added ${APP_NAME} to kustomization at ${NAMESPACE_PATH}/kustomization.yaml"
+                cd -
+              else 
+                echo "ℹ️  ${APP_NAME} already present in kustomization at ${NAMESPACE_PATH}/kustomization.yaml"
+              fi
+            else
+              echo "⚠️  No kustomization.yaml found at ${NAMESPACE_PATH}"
+            fi
+
+            # Update image tag
+            APP_PATH="${CLUSTER_PATH}/${NAMESPACE}/${APP_NAME}"
+            
+            # We store our helm values in ${APP_NAME}-values.yaml
+            if [ -f "${APP_PATH}/${APP_NAME}-values.yaml" ]; then
+              # Check if tag is already current
+              CURRENT_TAG=$(yq eval ".image.tag" "${APP_PATH}/${APP_NAME}-values.yaml" 2>/dev/null || echo "none")
+              if [ "$CURRENT_TAG" = "$IMAGE_TAG" ]; then
+                echo "ℹ️  Image tag ${IMAGE_TAG} is already current in ${APP_PATH}/${APP_NAME}-values.yaml"
+                return 0
+              fi
+              
+              # Update Helm values
+              yq eval ".image.tag = \"${IMAGE_TAG}\"" -i "${APP_PATH}/${APP_NAME}-values.yaml"
+              echo "✅ Updated Helm values at ${APP_PATH}/${APP_NAME}-values.yaml (${CURRENT_TAG} → ${IMAGE_TAG})"
+            else
+              echo "⚠️  No values file found at ${APP_PATH}/${APP_NAME}-values.yaml"
+            fi
+          }
+          
+          # Function for direct commit deployment with retry logic
+          deploy_direct_commit() {
+            local max_attempts=5
+            local attempt=1
+            
+            while [ $attempt -le $max_attempts ]; do
+              echo "🚀 Direct commit deployment attempt $attempt of $max_attempts for ${CLUSTER_NAME} cluster"
+              
+              # Always pull latest changes before making modifications
+              echo "📥 Fetching latest changes from GitOps repo..."
+              git fetch origin main
+              git reset --hard origin/main
+              
+              # Apply our changes
+              apply_changes
+              
+              # Check if there are any changes to commit
+              if git diff --quiet && git diff --cached --quiet; then
+                echo "✅ No changes to commit - deployment is already current"
+                return 0
+              fi
+              
+              # Show what we're about to commit
+              echo "📝 Changes to be committed:"
+              git diff --name-status
+              
+              # Commit changes
+              git add .
+              git commit -m "Deploy ${APP_NAME} ${IMAGE_TAG} to ${NAMESPACE} on ${CLUSTER_NAME} cluster [attempt $attempt]${COMMIT_SUFFIX}
+
+              - Image: ${IMAGE_TAG}
+              - Triggered by: ${{ github.actor }}
+              - Commit: ${{ github.sha }}
+              - Workflow: ${{ github.run_id }}"
+              
+              # Try to push
+              echo "📤 Attempting to push changes..."
+              if git push origin main; then
+                echo "✅ Successfully deployed ${APP_NAME} to ${CLUSTER_NAME} cluster on attempt $attempt"
+                return 0
+              else
+                echo "❌ Push failed on attempt $attempt"
+                if [ $attempt -lt $max_attempts ]; then
+                  # Calculate backoff delay (exponential: 2, 4, 8, 16 seconds)
+                  local delay=$((2 ** attempt))
+                  echo "⏳ Waiting ${delay} seconds before retry..."
+                  sleep $delay
+                fi
+                attempt=$((attempt + 1))
+              fi
+            done
+            
+            echo "💥 Failed to deploy after $max_attempts attempts"
+            echo "This could indicate:"
+            echo "  - High concurrent deployment activity"
+            echo "  - Network connectivity issues"
+            echo "  - GitOps repository access problems"
+            echo "  - Conflicting manual changes in the repository"
+            return 1
+          }
+          
+          # Function for pull request deployment
+          deploy_pull_request() {
+            echo "🚀 Creating pull request deployment for ${CLUSTER_NAME} cluster"
+            
+            # Create feature branch
+            BRANCH_NAME="deploy/${APP_NAME}/${IMAGE_TAG}-${CLUSTER_NAME}"
+            git checkout -b "${BRANCH_NAME}"
+            
+            # Apply our changes
+            apply_changes
+            
+            # Check if there are any changes to commit
+            if git diff --quiet && git diff --cached --quiet; then
+              echo "✅ No changes to commit - deployment is already current"
+              return 0
+            fi
+            
+            # Commit and push branch
+            git add .
+            git commit -m "Deploy ${APP_NAME} ${IMAGE_TAG} to ${NAMESPACE} on ${CLUSTER_NAME}${COMMIT_SUFFIX}"
+            git push origin "${BRANCH_NAME}"
+            
+            # Create Pull Request using GitHub CLI
+            export GITHUB_TOKEN="${{ secrets.CICD_TOKEN }}"
+            gh pr create \
+              --repo "${GITOPS_REPO}" \
+              --title "Deploy ${APP_NAME} ${IMAGE_TAG} to ${NAMESPACE} (${CLUSTER_NAME} cluster)" \
+              --body "Automated deployment PR for ${APP_NAME} version ${IMAGE_TAG}
+
+              **Cluster**: ${CLUSTER_NAME}
+              **Image**: \`${IMAGE_TAG}\`
+              **Target**: ${NAMESPACE} namespace in ${CLUSTER_PATH}
+              **Triggered by**: ${{ github.actor }}
+              **Workflow**: ${{ github.run_id }}${COMMIT_SUFFIX}
+
+              This PR will auto-merge once all required checks pass." \
+              --base main \
+              --head "${BRANCH_NAME}"
+            
+            # Enable auto-merge if requested
+            if [ "$PR_AUTO_MERGE" = "true" ]; then
+              gh pr merge "${BRANCH_NAME}" --repo "${GITOPS_REPO}" --auto --squash
+              echo "✅ Created PR for ${CLUSTER_NAME} cluster with auto-merge enabled"
+            else
+              echo "✅ Created PR for ${CLUSTER_NAME} cluster (manual merge required)"
+            fi
+          }
+          
+          # Clone GitOps repo
+          echo "📥 Cloning GitOps repository: ${GITOPS_REPO}"
+          git clone https://x-access-token:${{ secrets.CICD_TOKEN }}@github.com/${GITOPS_REPO}.git gitops
+          cd gitops
+          
+          # Configure git
+          git config user.name "${{ secrets.CICD_USER_NAME }}"
+          git config user.email "${{ secrets.CICD_USER_EMAIL }}"
+          
+          # Show current state
+          echo "📍 Current GitOps repo state:"
+          echo "  Branch: $(git branch --show-current)"
+          echo "  Last commit: $(git log -1 --oneline)"
+          echo "  Target cluster: ${CLUSTER_NAME}"
+          echo "  Application: ${APP_NAME}"
+          echo "  Image tag: ${IMAGE_TAG}"
+          echo "  Namespace: ${NAMESPACE}"
+          echo "  Deployment method: ${DEPLOYMENT_METHOD}"
+          
+          # Execute deployment based on method
+          if [ "$DEPLOYMENT_METHOD" = "direct-commit" ]; then
+            if deploy_direct_commit; then
+              echo "🎉 Direct commit deployment completed successfully!"
+            else
+              echo "💥 Direct commit deployment failed after all retry attempts"
+              exit 1
+            fi
+          elif [ "$DEPLOYMENT_METHOD" = "pull-request" ]; then
+            if deploy_pull_request; then
+              echo "🎉 Pull request deployment completed successfully!"
+            else
+              echo "💥 Pull request deployment failed"
+              exit 1
+            fi
+          else
+            echo "❌ Invalid deployment method: ${DEPLOYMENT_METHOD}"
+            echo "Valid methods are: direct-commit, pull-request"
+            exit 1
+          fi
