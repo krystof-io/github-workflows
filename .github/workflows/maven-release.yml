@@ -710,20 +710,16 @@ jobs:
           
           echo "✅ Cleanup process completed"
 
-      - name: Add failure summary
+      - name: Add cleanup summary
         if: always()
         run: |
-          echo "## ❌ Maven Release Failed" >> $GITHUB_STEP_SUMMARY
+          echo "### 🧹 Automatic Cleanup Completed" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "The Maven release process failed and has been cleaned up." >> $GITHUB_STEP_SUMMARY
+          echo "The following cleanup actions were performed after the release failure:" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### 🧹 Cleanup Actions Taken" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ Removed any partially created tags" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ Removed any partially created branches" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ Reset repository to clean state" >> $GITHUB_STEP_SUMMARY
+          echo "- 🔍 **Checked for partial release artifacts**" >> $GITHUB_STEP_SUMMARY
+          echo "- 🏷️ **Removed any partially created tags**" >> $GITHUB_STEP_SUMMARY
+          echo "- 🌿 **Removed any partially created branches**" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ **Reset repository to clean state**" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### 🔍 Next Steps" >> $GITHUB_STEP_SUMMARY
-          echo "1. **📝 Check Logs**: Review the workflow logs for error details" >> $GITHUB_STEP_SUMMARY
-          echo "2. **🔧 Fix Issues**: Address any issues identified in the logs" >> $GITHUB_STEP_SUMMARY
-          echo "3. **🔄 Retry**: Re-run the release workflow once issues are resolved" >> $GITHUB_STEP_SUMMARY
-          echo "4. **💬 Get Help**: Contact the DevOps team if you need assistance" >> $GITHUB_STEP_SUMMARY
+          echo " **Repository is now ready for a retry** - you can safely re-run the release workflow." >> $GITHUB_STEP_SUMMARY
