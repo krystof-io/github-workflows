@@ -41,7 +41,7 @@ on:
         required: true
       CICD_TOKEN:
         required: true
-        description: 'Personal Access Token to trigger CI/CD workflows (optional, falls back to GITHUB_TOKEN)'
+        description: 'Personal Access Token to trigger CI/CD workflows Required for our tag pushes to execute other workflows per Github standards.'
 
 jobs:
   # Validate inputs
