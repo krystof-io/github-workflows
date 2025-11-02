@@ -226,22 +226,59 @@ jobs:
             exit 1
           fi
           
-          # Verify image tag is correct with retry logic
-          echo "🏷️  Verifying deployed image tag..."
+          # Verify image tag is correct by checking RUNNING pods (not just deployment spec)
+          echo "🏷️  Verifying deployed image tag in running pods..."
           IMAGE_VERIFIED=false
           RETRY_COUNT=0
           MAX_RETRIES=30  # 5 minutes with 10s intervals
           
           while [[ ${RETRY_COUNT} -lt ${MAX_RETRIES} && "${IMAGE_VERIFIED}" == "false" ]]; do
-            DEPLOYED_IMAGE=$(kubectl get deployment ${DEPLOYMENT_NAME} -n ${NAMESPACE} --context=${CLUSTER_NAME} -o jsonpath='{.spec.template.spec.containers[0].image}')
-            echo "Deployed image: ${DEPLOYED_IMAGE}"
+            # Check deployment spec first
+            DEPLOYMENT_IMAGE=$(kubectl get deployment ${DEPLOYMENT_NAME} -n ${NAMESPACE} --context=${CLUSTER_NAME} -o jsonpath='{.spec.template.spec.containers[0].image}')
+            echo "📋 Deployment spec image: ${DEPLOYMENT_IMAGE}"
             
-            if [[ "${DEPLOYED_IMAGE}" == *":${IMAGE_TAG}" ]]; then
-              echo "✅ Image tag verification passed"
-              IMAGE_VERIFIED=true
+            # More importantly, check what's actually running in pods
+            RUNNING_PODS=$(kubectl get pods -n ${NAMESPACE} --context=${CLUSTER_NAME} \
+              --field-selector=status.phase=Running \
+              -l app.kubernetes.io/instance=${APP_NAME} \
+              -o jsonpath='{.items[*].spec.containers[0].image}' 2>/dev/null || \
+              kubectl get pods -n ${NAMESPACE} --context=${CLUSTER_NAME} \
+              --field-selector=status.phase=Running \
+              -l app.kubernetes.io/name=${APP_NAME} \
+              -o jsonpath='{.items[*].spec.containers[0].image}' 2>/dev/null || \
+              kubectl get pods -n ${NAMESPACE} --context=${CLUSTER_NAME} \
+              --field-selector=status.phase=Running \
+              -l app=${APP_NAME} \
+              -o jsonpath='{.items[*].spec.containers[0].image}' 2>/dev/null || echo "")
+            
+            if [[ -n "${RUNNING_PODS}" ]]; then
+              echo "📋 Running pod images: ${RUNNING_PODS}"
+              
+              # Check if all running pods have the expected image
+              ALL_PODS_CORRECT=true
+              for pod_image in ${RUNNING_PODS}; do
+                if [[ "${pod_image}" != *":${IMAGE_TAG}" ]]; then
+                  ALL_PODS_CORRECT=false
+                  break
+                fi
+              done
+              
+              # Also verify deployment spec matches (both conditions must be true)
+              if [[ "${DEPLOYMENT_IMAGE}" == *":${IMAGE_TAG}" && "${ALL_PODS_CORRECT}" == "true" ]]; then
+                echo "✅ Image tag verification passed - both deployment spec and running pods have correct image"
+                IMAGE_VERIFIED=true
+              else
+                RETRY_COUNT=$((RETRY_COUNT + 1))
+                if [[ "${DEPLOYMENT_IMAGE}" != *":${IMAGE_TAG}" ]]; then
+                  echo "⏳ Deployment spec not yet updated (${RETRY_COUNT}/${MAX_RETRIES}). Waiting for Flux reconciliation..."
+                else
+                  echo "⏳ Pods still rolling out with new image (${RETRY_COUNT}/${MAX_RETRIES}). Waiting for pod replacement..."
+                fi
+                sleep 10
+              fi
             else
               RETRY_COUNT=$((RETRY_COUNT + 1))
-              echo "⏳ Image not yet updated (${RETRY_COUNT}/${MAX_RETRIES}). Waiting for Flux reconciliation..."
+              echo "⏳ No running pods found yet (${RETRY_COUNT}/${MAX_RETRIES}). Waiting for deployment rollout..."
               sleep 10
             fi
           done
@@ -249,11 +286,23 @@ jobs:
           if [[ "${IMAGE_VERIFIED}" == "false" ]]; then
             echo "❌ Image tag verification failed after ${MAX_RETRIES} retries!"
             echo "Expected tag: ${IMAGE_TAG}"
-            echo "Final deployed image: ${DEPLOYED_IMAGE}"
+            echo "Deployment spec image: ${DEPLOYMENT_IMAGE}"
+            echo "Running pod images: ${RUNNING_PODS}"
+            echo ""
+            echo "📊 Current pod status:"
+            kubectl get pods -n ${NAMESPACE} --context=${CLUSTER_NAME} \
+              -l app.kubernetes.io/instance=${APP_NAME} -o wide 2>/dev/null || \
+            kubectl get pods -n ${NAMESPACE} --context=${CLUSTER_NAME} \
+              -l app.kubernetes.io/name=${APP_NAME} -o wide 2>/dev/null || \
+            kubectl get pods -n ${NAMESPACE} --context=${CLUSTER_NAME} \
+              -l app=${APP_NAME} -o wide 2>/dev/null || echo "No pods found"
+            echo ""
             echo "This could indicate:"
             echo "  - Flux reconciliation is delayed"
-            echo "  - GitOps repository update failed"
+            echo "  - GitOps repository update failed"  
             echo "  - Image pull issues"
+            echo "  - Pod startup/health check failures"
+            echo "  - Insufficient resources for pod scheduling"
             exit 1
           fi
           
