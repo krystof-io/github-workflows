@@ -381,7 +381,7 @@ jobs:
     secrets:
       # Pass cluster-specific secrets (these would be configured per cluster)
       CLUSTER_CA_CERTIFICATE: ${{ secrets[format('K8S_CLUSTER_CA_CERT_FOR_{0}_CLUSTER', matrix.name)] }}
-      SERVICE_ACCOUNT_TOKEN: ${{ secrets[format('K8S_SERVICE_ACCOUNT_TOKEN_FOR_{0}_CLUSTER_CICD_K8S_ACCESS', matrix.name)] }}
+      SERVICE_ACCOUNT_TOKEN: ${{ secrets[format('SERVICE_ACCOUNT_TOKEN_FOR_{0}_CLUSTER_CICD_K8S_ACCESS', matrix.name)] }}
 
   # Validate production release
   validate-prod-release:
@@ -435,7 +435,6 @@ jobs:
       validation_timeout: 900  # Longer timeout for production
       cluster_url: ${{ matrix.cluster_url }}
     secrets:
-      # Pass cluster-specific secrets (these would be configured per cluster)
       CLUSTER_CA_CERTIFICATE: ${{ secrets[format('K8S_CLUSTER_CA_CERT_FOR_{0}_CLUSTER', matrix.name)] }}
       SERVICE_ACCOUNT_TOKEN: ${{ secrets[format('SERVICE_ACCOUNT_TOKEN_FOR_{0}_CLUSTER_CICD_K8S_ACCESS', matrix.name)] }}
       
