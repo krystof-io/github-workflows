@@ -27,16 +27,16 @@ on:
         type: number
         description: 'Timeout in seconds for deployment validation'
       cluster_url:
-        required: false
+        required: true
         type: string
         description: 'Kubernetes cluster server URL'
     secrets:
       CLUSTER_CA_CERTIFICATE:
         description: 'Base64 encoded cluster CA certificate'
-        required: false
+        required: true
       SERVICE_ACCOUNT_TOKEN:
         description: 'Service account token for cluster access'
-        required: false
+        required: true
 
 jobs:
   validate-deployment:
@@ -124,7 +124,7 @@ jobs:
             echo "📋 To debug:"
             echo "  - Verify CA certificate: kubectl config view --raw --minify -o jsonpath='{.clusters[0].cluster.certificate-authority-data}'"
             echo "  - Test connectivity: curl -k ${{ inputs.cluster_url }}/version"
-            echo "  - Check service account: kubectl auth can-i get deployments --as=system:serviceaccount:kube-system:cicd-deployment-validator"
+            echo "  - Check service account: kubectl auth can-i get deployments --as=system:serviceaccount:kube-system:cicd-k8s-access"
             exit 1
           fi
           
