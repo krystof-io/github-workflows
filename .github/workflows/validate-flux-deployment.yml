@@ -26,6 +26,17 @@ on:
         default: 600
         type: number
         description: 'Timeout in seconds for deployment validation'
+      cluster_url:
+        required: false
+        type: string
+        description: 'Kubernetes cluster server URL'
+    secrets:
+      CLUSTER_CA_CERTIFICATE:
+        description: 'Base64 encoded cluster CA certificate'
+        required: false
+      SERVICE_ACCOUNT_TOKEN:
+        description: 'Service account token for cluster access'
+        required: false
 
 jobs:
   validate-deployment:
@@ -33,15 +44,90 @@ jobs:
     steps:
       - name: Setup kubectl
         run: |
-          echo "🔧 Setting up kubectl for production deployment validation..."
+          echo "🔧 Setting up kubectl for deployment validation..."
           
-          # Note: In a real environment, you would configure kubectl with cluster credentials here
+          # Verify kubectl is available
           if ! command -v kubectl &> /dev/null; then
             echo "❌ kubectl not found"
             exit 1
           fi
           
-          echo "✅ kubectl configured for cluster: ${{ inputs.cluster_name }}"
+          CLUSTER_NAME="${{ inputs.cluster_name }}"
+          
+          # Using Service Account token
+          echo "🔑 Configuring kubectl using service account token..."
+          
+          # Set up cluster configuration
+          kubectl config set-cluster "${CLUSTER_NAME}" \
+            --server="${{ inputs.cluster_url }}" \
+            --insecure-skip-tls-verify=false
+          
+          # Add CA certificate if provided
+          if [[ -n "${{ secrets.CLUSTER_CA_CERTIFICATE }}" ]]; then
+            echo "🔐 Adding cluster CA certificate..."
+            echo "${{ secrets.CLUSTER_CA_CERTIFICATE }}" | base64 -d > /tmp/ca.crt
+            
+            # Validate the CA certificate format
+            if openssl x509 -in /tmp/ca.crt -noout -text >/dev/null 2>&1; then
+              echo "✅ CA certificate format is valid"
+              
+              # Show certificate details for debugging
+              echo "📋 CA Certificate Details:"
+              openssl x509 -in /tmp/ca.crt -noout -subject -issuer -enddate 2>/dev/null || echo "  (Details not available)"
+              
+              kubectl config set-cluster "${CLUSTER_NAME}" \
+                --certificate-authority=/tmp/ca.crt \
+                --embed-certs=true
+            else
+              echo "❌ Invalid CA certificate format"
+              echo "The provided CLUSTER_CA_CERTIFICATE secret does not contain a valid X.509 certificate"
+              rm -f /tmp/ca.crt
+              exit 1
+            fi
+            rm -f /tmp/ca.crt
+          else
+            echo "⚠️  No CA certificate provided - using insecure connection"
+            kubectl config set-cluster "${CLUSTER_NAME}" \
+              --insecure-skip-tls-verify=true
+          fi
+          
+          # Set up user credentials
+          kubectl config set-credentials "${CLUSTER_NAME}-user" \
+            --token="${{ secrets.SERVICE_ACCOUNT_TOKEN }}"
+          
+          # Set up context
+          kubectl config set-context "${CLUSTER_NAME}" \
+            --cluster="${CLUSTER_NAME}" \
+            --user="${CLUSTER_NAME}-user"
+          
+          # Use the context
+          kubectl config use-context "${CLUSTER_NAME}"
+          
+          # Verify connection
+          if kubectl cluster-info >/dev/null 2>&1; then
+            echo "✅ kubectl configured successfully using service account for cluster: ${CLUSTER_NAME}"
+          else
+            echo "❌ Failed to connect to cluster ${CLUSTER_NAME} using service account"
+            echo ""
+            echo "🔍 Debugging Information:"
+            echo "  Server URL: ${{ inputs.cluster_url }}"
+            echo "  CA Certificate provided: $([ -n '${{ secrets.CLUSTER_CA_CERTIFICATE }}' ] && echo 'Yes' || echo 'No')"
+            echo "  Service Account Token provided: $([ -n '${{ secrets.SERVICE_ACCOUNT_TOKEN }}' ] && echo 'Yes' || echo 'No')"
+            echo ""
+            echo "🚨 Common causes:"
+            echo "  1. CA certificate doesn't match cluster's actual CA"
+            echo "  2. Cluster server URL is incorrect"
+            echo "  3. Service account token is expired or invalid"
+            echo "  4. Network connectivity issues"
+            echo "  5. Cluster API server is not accessible"
+            echo ""
+            echo "📋 To debug:"
+            echo "  - Verify CA certificate: kubectl config view --raw --minify -o jsonpath='{.clusters[0].cluster.certificate-authority-data}'"
+            echo "  - Test connectivity: curl -k ${{ inputs.cluster_url }}/version"
+            echo "  - Check service account: kubectl auth can-i get deployments --as=system:serviceaccount:kube-system:cicd-deployment-validator"
+            exit 1
+          fi
+          
 
       - name: Validate deployment
         run: |

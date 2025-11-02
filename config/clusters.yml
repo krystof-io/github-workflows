@@ -10,6 +10,7 @@ clusters:
     gitops_repo: 'krystof-io/kio-build-cluster'
     cluster_path: 'k8s-manifests/components/apps'
     description: 'Build and CI/CD infrastructure cluster'
+    cluster_url: 'https://build.krystof.io:6443'
   
   # # App cluster - hosts production applications
   # app:
