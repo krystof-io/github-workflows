@@ -103,8 +103,9 @@ jobs:
           # Use the context
           kubectl config use-context "${CLUSTER_NAME}"
           
-          # Verify connection
-          if kubectl cluster-info >/dev/null 2>&1; then
+          # Verify connection with a simple command that uses our actual permissions
+          echo "🔍 Testing kubectl connectivity..."
+          if kubectl auth can-i get deployments >/dev/null 2>&1; then
             echo "✅ kubectl configured successfully using service account for cluster: ${CLUSTER_NAME}"
           else
             echo "❌ Failed to connect to cluster ${CLUSTER_NAME} using service account"
