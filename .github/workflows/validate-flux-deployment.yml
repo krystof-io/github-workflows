@@ -148,9 +148,57 @@ jobs:
           echo "  Cluster: ${CLUSTER_NAME}"
           echo "  Timeout: ${TIMEOUT_SECONDS}s"
           
-          # First check if deployment needs to change (avoid false positives)
+          # Find deployments related to this app (flexible matching)
+          echo "🔍 Finding deployments for app: ${APP_NAME}"
+          
+          # Strategy 1: Try exact app name match first
+          DEPLOYMENT_NAME=""
+          if kubectl get deployment ${APP_NAME} -n ${NAMESPACE} --context=${CLUSTER_NAME} >/dev/null 2>&1; then
+            DEPLOYMENT_NAME=${APP_NAME}
+            echo "✅ Found deployment with exact app name: ${DEPLOYMENT_NAME}"
+          else
+            # Strategy 2: Look for deployments with app name prefix or labels
+            echo "🔍 Searching for deployments with app name pattern or labels..."
+            
+            # Try to find by Helm labels (app.kubernetes.io/name or app.kubernetes.io/instance)
+            HELM_DEPLOYMENTS=$(kubectl get deployments -n ${NAMESPACE} --context=${CLUSTER_NAME} \
+              -l "app.kubernetes.io/name=${APP_NAME}" -o name 2>/dev/null | head -1)
+            
+            if [ -n "$HELM_DEPLOYMENTS" ]; then
+              DEPLOYMENT_NAME=$(echo $HELM_DEPLOYMENTS | cut -d'/' -f2)
+              echo "✅ Found deployment by Helm app name label: ${DEPLOYMENT_NAME}"
+            else
+              # Try by instance label (Helm release name)
+              HELM_DEPLOYMENTS=$(kubectl get deployments -n ${NAMESPACE} --context=${CLUSTER_NAME} \
+                -l "app.kubernetes.io/instance=${APP_NAME}" -o name 2>/dev/null | head -1)
+              
+              if [ -n "$HELM_DEPLOYMENTS" ]; then
+                DEPLOYMENT_NAME=$(echo $HELM_DEPLOYMENTS | cut -d'/' -f2)
+                echo "✅ Found deployment by Helm instance label: ${DEPLOYMENT_NAME}"
+              else
+                # Strategy 3: Pattern matching (app-name-*)
+                PATTERN_DEPLOYMENTS=$(kubectl get deployments -n ${NAMESPACE} --context=${CLUSTER_NAME} \
+                  -o name 2>/dev/null | grep "deployment.apps/${APP_NAME}-" | head -1)
+                
+                if [ -n "$PATTERN_DEPLOYMENTS" ]; then
+                  DEPLOYMENT_NAME=$(echo $PATTERN_DEPLOYMENTS | cut -d'/' -f2)
+                  echo "✅ Found deployment by name pattern: ${DEPLOYMENT_NAME}"
+                else
+                  # Strategy 4: List all deployments and let user know
+                  echo "❌ Could not find deployment for app: ${APP_NAME}"
+                  echo "📋 Available deployments in namespace ${NAMESPACE}:"
+                  kubectl get deployments -n ${NAMESPACE} --context=${CLUSTER_NAME} -o name 2>/dev/null || echo "  (No deployments found or no access)"
+                  exit 1
+                fi
+              fi
+            fi
+          fi
+          
+          echo "🎯 Using deployment: ${DEPLOYMENT_NAME}"
+          
+          # Check current deployment state
           echo "🔍 Checking current deployment state..."
-          CURRENT_IMAGE=$(kubectl get deployment ${APP_NAME} -n ${NAMESPACE} --context=${CLUSTER_NAME} -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || echo "")
+          CURRENT_IMAGE=$(kubectl get deployment ${DEPLOYMENT_NAME} -n ${NAMESPACE} --context=${CLUSTER_NAME} -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || echo "")
           
           if [[ -n "${CURRENT_IMAGE}" && "${CURRENT_IMAGE}" == *":${IMAGE_TAG}" ]]; then
             echo "ℹ️  Deployment already has expected image: ${CURRENT_IMAGE}"
@@ -164,12 +212,17 @@ jobs:
           
           # Wait for deployment to be ready (includes readiness probes)
           echo "📦 Waiting for deployment rollout (including readiness probes)..."
-          if timeout ${TIMEOUT_SECONDS} kubectl rollout status deployment/${APP_NAME} -n ${NAMESPACE} --context=${CLUSTER_NAME}; then
+          if timeout ${TIMEOUT_SECONDS} kubectl rollout status deployment/${DEPLOYMENT_NAME} -n ${NAMESPACE} --context=${CLUSTER_NAME}; then
             echo "✅ Deployment rollout completed"
           else
             echo "❌ Deployment rollout failed or timed out"
-            kubectl get deployment ${APP_NAME} -n ${NAMESPACE} --context=${CLUSTER_NAME} -o wide
-            kubectl get pods -n ${NAMESPACE} -l app=${APP_NAME} --context=${CLUSTER_NAME}
+            kubectl get deployment ${DEPLOYMENT_NAME} -n ${NAMESPACE} --context=${CLUSTER_NAME} -o wide
+            # Try multiple label selectors for pods
+            echo "📋 Pod status (trying multiple label selectors):"
+            kubectl get pods -n ${NAMESPACE} -l app=${APP_NAME} --context=${CLUSTER_NAME} 2>/dev/null || \
+            kubectl get pods -n ${NAMESPACE} -l app.kubernetes.io/name=${APP_NAME} --context=${CLUSTER_NAME} 2>/dev/null || \
+            kubectl get pods -n ${NAMESPACE} -l app.kubernetes.io/instance=${APP_NAME} --context=${CLUSTER_NAME} 2>/dev/null || \
+            echo "  Could not find pods with standard labels"
             exit 1
           fi
           
@@ -180,7 +233,7 @@ jobs:
           MAX_RETRIES=30  # 5 minutes with 10s intervals
           
           while [[ ${RETRY_COUNT} -lt ${MAX_RETRIES} && "${IMAGE_VERIFIED}" == "false" ]]; do
-            DEPLOYED_IMAGE=$(kubectl get deployment ${APP_NAME} -n ${NAMESPACE} --context=${CLUSTER_NAME} -o jsonpath='{.spec.template.spec.containers[0].image}')
+            DEPLOYED_IMAGE=$(kubectl get deployment ${DEPLOYMENT_NAME} -n ${NAMESPACE} --context=${CLUSTER_NAME} -o jsonpath='{.spec.template.spec.containers[0].image}')
             echo "Deployed image: ${DEPLOYED_IMAGE}"
             
             if [[ "${DEPLOYED_IMAGE}" == *":${IMAGE_TAG}" ]]; then
@@ -206,8 +259,12 @@ jobs:
           
           # Show final pod status
           echo "📊 Final deployment status:"
-          kubectl get deployment ${APP_NAME} -n ${NAMESPACE} --context=${CLUSTER_NAME} -o wide
-          kubectl get pods -n ${NAMESPACE} -l app=${APP_NAME} --context=${CLUSTER_NAME} -o wide
+          kubectl get deployment ${DEPLOYMENT_NAME} -n ${NAMESPACE} --context=${CLUSTER_NAME} -o wide
+          echo "📋 Pod status:"
+          kubectl get pods -n ${NAMESPACE} -l app=${APP_NAME} --context=${CLUSTER_NAME} -o wide 2>/dev/null || \
+          kubectl get pods -n ${NAMESPACE} -l app.kubernetes.io/name=${APP_NAME} --context=${CLUSTER_NAME} -o wide 2>/dev/null || \
+          kubectl get pods -n ${NAMESPACE} -l app.kubernetes.io/instance=${APP_NAME} --context=${CLUSTER_NAME} -o wide 2>/dev/null || \
+          echo "  Could not find pods with standard labels"
           
           echo "🎉 Production deployment validation completed successfully!"
 
