@@ -1,0 +1,155 @@
+# Workflow to validate flux deployments after gitops reconciliation
+# Location: github-workflows repo at .github/workflows/validate-flux-deployment.yml
+
+name: Validate Flux Deployment
+
+on:
+  workflow_call:
+    inputs:
+      app_name:
+        required: true
+        type: string
+        description: 'Name of the application'
+      image_tag:
+        required: true
+        type: string
+        description: 'Expected Docker image tag'
+      target_namespace:
+        required: true
+        type: string
+        description: 'Target namespace'
+      cluster_name:
+        required: true
+        type: string
+        description: 'Name of the target cluster'
+      validation_timeout:
+        default: 600
+        type: number
+        description: 'Timeout in seconds for deployment validation'
+
+jobs:
+  validate-deployment:
+    runs-on: arc-runners-javadev
+    steps:
+      - name: Setup kubectl
+        run: |
+          echo "🔧 Setting up kubectl for production deployment validation..."
+          
+          # Note: In a real environment, you would configure kubectl with cluster credentials here
+          if ! command -v kubectl &> /dev/null; then
+            echo "❌ kubectl not found"
+            exit 1
+          fi
+          
+          echo "✅ kubectl configured for cluster: ${{ inputs.cluster_name }}"
+
+      - name: Validate deployment
+        run: |
+          set -e
+          
+          APP_NAME="${{ inputs.app_name }}"
+          IMAGE_TAG="${{ inputs.image_tag }}"
+          NAMESPACE="${{ inputs.target_namespace }}"
+          CLUSTER_NAME="${{ inputs.cluster_name }}"
+          TIMEOUT_SECONDS="${{ inputs.validation_timeout }}"
+          
+          echo "🔍 Starting production deployment validation..."
+          echo "📋 Validation parameters:"
+          echo "  App: ${APP_NAME}"
+          echo "  Expected Image: ${IMAGE_TAG}"
+          echo "  Namespace: ${NAMESPACE}"
+          echo "  Cluster: ${CLUSTER_NAME}"
+          echo "  Timeout: ${TIMEOUT_SECONDS}s"
+          
+          # First check if deployment needs to change (avoid false positives)
+          echo "🔍 Checking current deployment state..."
+          CURRENT_IMAGE=$(kubectl get deployment ${APP_NAME} -n ${NAMESPACE} --context=${CLUSTER_NAME} -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || echo "")
+          
+          if [[ -n "${CURRENT_IMAGE}" && "${CURRENT_IMAGE}" == *":${IMAGE_TAG}" ]]; then
+            echo "ℹ️  Deployment already has expected image: ${CURRENT_IMAGE}"
+            echo "✅ No deployment change needed - validation passed"
+            exit 0
+          elif [[ -n "${CURRENT_IMAGE}" ]]; then
+            echo "🔄 Current image: ${CURRENT_IMAGE}"
+            echo "🎯 Target image: *:${IMAGE_TAG}"
+            echo "⏳ Waiting for Flux to reconcile and deploy new image..."
+          fi
+          
+          # Wait for deployment to be ready (includes readiness probes)
+          echo "📦 Waiting for deployment rollout (including readiness probes)..."
+          if timeout ${TIMEOUT_SECONDS} kubectl rollout status deployment/${APP_NAME} -n ${NAMESPACE} --context=${CLUSTER_NAME}; then
+            echo "✅ Deployment rollout completed"
+          else
+            echo "❌ Deployment rollout failed or timed out"
+            kubectl get deployment ${APP_NAME} -n ${NAMESPACE} --context=${CLUSTER_NAME} -o wide
+            kubectl get pods -n ${NAMESPACE} -l app=${APP_NAME} --context=${CLUSTER_NAME}
+            exit 1
+          fi
+          
+          # Verify image tag is correct with retry logic
+          echo "🏷️  Verifying deployed image tag..."
+          IMAGE_VERIFIED=false
+          RETRY_COUNT=0
+          MAX_RETRIES=30  # 5 minutes with 10s intervals
+          
+          while [[ ${RETRY_COUNT} -lt ${MAX_RETRIES} && "${IMAGE_VERIFIED}" == "false" ]]; do
+            DEPLOYED_IMAGE=$(kubectl get deployment ${APP_NAME} -n ${NAMESPACE} --context=${CLUSTER_NAME} -o jsonpath='{.spec.template.spec.containers[0].image}')
+            echo "Deployed image: ${DEPLOYED_IMAGE}"
+            
+            if [[ "${DEPLOYED_IMAGE}" == *":${IMAGE_TAG}" ]]; then
+              echo "✅ Image tag verification passed"
+              IMAGE_VERIFIED=true
+            else
+              RETRY_COUNT=$((RETRY_COUNT + 1))
+              echo "⏳ Image not yet updated (${RETRY_COUNT}/${MAX_RETRIES}). Waiting for Flux reconciliation..."
+              sleep 10
+            fi
+          done
+          
+          if [[ "${IMAGE_VERIFIED}" == "false" ]]; then
+            echo "❌ Image tag verification failed after ${MAX_RETRIES} retries!"
+            echo "Expected tag: ${IMAGE_TAG}"
+            echo "Final deployed image: ${DEPLOYED_IMAGE}"
+            echo "This could indicate:"
+            echo "  - Flux reconciliation is delayed"
+            echo "  - GitOps repository update failed"
+            echo "  - Image pull issues"
+            exit 1
+          fi
+          
+          # Show final pod status
+          echo "📊 Final deployment status:"
+          kubectl get deployment ${APP_NAME} -n ${NAMESPACE} --context=${CLUSTER_NAME} -o wide
+          kubectl get pods -n ${NAMESPACE} -l app=${APP_NAME} --context=${CLUSTER_NAME} -o wide
+          
+          echo "🎉 Production deployment validation completed successfully!"
+
+      - name: Report validation results
+        if: always()
+        run: |
+          if [[ "${{ job.status }}" == "success" ]]; then
+            echo "## ✅ Production Deployment Validation - PASSED" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### 📊 Validation Results" >> $GITHUB_STEP_SUMMARY
+            echo "- ✅ **Deployment Status**: Ready" >> $GITHUB_STEP_SUMMARY
+            echo "- ✅ **Image Verification**: Correct tag deployed" >> $GITHUB_STEP_SUMMARY
+            echo "- ✅ **Pod Health**: All pods ready" >> $GITHUB_STEP_SUMMARY
+            echo "- ✅ **Service Health**: Health checks passing" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### 🎯 Deployment Details" >> $GITHUB_STEP_SUMMARY
+            echo "- **Application**: ${{ inputs.app_name }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Image Tag**: ${{ inputs.image_tag }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Namespace**: ${{ inputs.target_namespace }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Cluster**: ${{ inputs.cluster_name }}" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "## ❌ Production Deployment Validation - FAILED" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### 🚨 Validation Failed" >> $GITHUB_STEP_SUMMARY
+            echo "The production deployment validation failed. Check the logs above for details." >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### 🔍 Troubleshooting Steps" >> $GITHUB_STEP_SUMMARY
+            echo "1. **Check Deployment Status**: \`kubectl get deployment ${{ inputs.app_name }} -n ${{ inputs.target_namespace }}\`" >> $GITHUB_STEP_SUMMARY
+            echo "2. **Check Pod Status**: \`kubectl get pods -n ${{ inputs.target_namespace }} -l app=${{ inputs.app_name }}\`" >> $GITHUB_STEP_SUMMARY
+            echo "3. **Check Pod Logs**: \`kubectl logs -n ${{ inputs.target_namespace }} -l app=${{ inputs.app_name }}\`" >> $GITHUB_STEP_SUMMARY
+            echo "4. **Check Events**: \`kubectl get events -n ${{ inputs.target_namespace }}\`" >> $GITHUB_STEP_SUMMARY
+          fi

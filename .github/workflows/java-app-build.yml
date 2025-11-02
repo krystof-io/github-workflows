@@ -363,6 +363,19 @@ jobs:
       CICD_USER_EMAIL: ${{ secrets.CICD_USER_EMAIL }}
       CICD_USER_NAME: ${{ secrets.CICD_USER_NAME }}
 
+  # Validate dev deployment
+  validate-dev-deployment:
+    needs: [build, deploy-dev]
+    strategy:
+      matrix: ${{ fromJson(needs.build.outputs.clusters_matrix) }}
+    uses: ./.github/workflows/validate-flux-deployment.yml
+    with:
+      app_name: ${{ inputs.app_name }}
+      image_tag: ${{ needs.build.outputs.image_tag }}
+      target_namespace: "kio-dev"
+      cluster_name: ${{ matrix.name }}
+      validation_timeout: 600
+
   # Validate production release
   validate-prod-release:
     runs-on: arc-runners-javadev
@@ -399,5 +412,18 @@ jobs:
       CICD_TOKEN: ${{ secrets.CICD_TOKEN }}
       CICD_USER_EMAIL: ${{ secrets.CICD_USER_EMAIL }}
       CICD_USER_NAME: ${{ secrets.CICD_USER_NAME }}
+
+  # Validate production deployment (after PR merge)
+  validate-prod-deployment:
+    needs: [build, deploy-prod]
+    strategy:
+      matrix: ${{ fromJson(needs.build.outputs.clusters_matrix) }}
+    uses: ./.github/workflows/validate-flux-deployment.yml
+    with:
+      app_name: ${{ inputs.app_name }}
+      image_tag: ${{ needs.build.outputs.image_tag }}
+      target_namespace: "kio-prod"
+      cluster_name: ${{ matrix.name }}
+      validation_timeout: 900  # Longer timeout for production
       
       
