@@ -530,6 +530,143 @@ jobs:
               throw error;
             }
 
+      - name: Auto-merge and cleanup
+        if: ${{ !inputs.dry_run }}
+        uses: actions/github-script@v7
+        env:
+          PR_NUMBER: ${{ steps.create_pr.outputs.pr_number }}
+          BRANCH_NAME: release/${{ env.FINAL_RELEASE_VERSION }}
+          FINAL_RELEASE_VERSION: ${{ env.FINAL_RELEASE_VERSION }}
+          FINAL_NEXT_VERSION: ${{ env.FINAL_NEXT_VERSION }}
+          PUSHED_TAG: ${{ env.PUSHED_TAG }}
+        with:
+          github-token: ${{ secrets.CICD_TOKEN }}
+          script: |
+            const prNumber = process.env.PR_NUMBER;
+            const branchName = process.env.BRANCH_NAME;
+            
+            if (!prNumber) {
+              console.log('❌ No PR number available - cannot auto-merge');
+              return;
+            }
+            
+            console.log(`🔀 Starting auto-merge process for PR #${prNumber}`);
+            
+            try {
+              // Wait a moment for PR to be fully created
+              console.log('⏳ Waiting 5 seconds for PR to be fully initialized...');
+              await new Promise(resolve => setTimeout(resolve, 5000));
+              
+              // Get PR details to check if it's mergeable
+              const { data: pr } = await github.rest.pulls.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: prNumber
+              });
+              
+              console.log(`📋 PR Status: ${pr.state}`);
+              console.log(`📋 PR Mergeable: ${pr.mergeable}`);
+              console.log(`📋 PR Mergeable State: ${pr.mergeable_state}`);
+              
+              // Check if PR is in a mergeable state
+              if (pr.state !== 'open') {
+                console.log(`❌ PR is not open (state: ${pr.state})`);
+                return;
+              }
+              
+              // Wait for checks if mergeable_state is not clean
+              let attempts = 0;
+              const maxAttempts = 12; // 2 minutes total (10 seconds * 12)
+              
+              while (pr.mergeable_state === 'unknown' && attempts < maxAttempts) {
+                attempts++;
+                console.log(`⏳ Waiting for PR checks to complete (attempt ${attempts}/${maxAttempts})...`);
+                await new Promise(resolve => setTimeout(resolve, 10000));
+                
+                const { data: updatedPr } = await github.rest.pulls.get({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  pull_number: prNumber
+                });
+                
+                pr.mergeable = updatedPr.mergeable;
+                pr.mergeable_state = updatedPr.mergeable_state;
+                console.log(`📋 Updated Mergeable State: ${pr.mergeable_state}`);
+              }
+              
+              // Proceed with merge if possible
+              if (pr.mergeable === false) {
+                console.log('❌ PR has merge conflicts - cannot auto-merge');
+                console.log('🛠️  Manual intervention required to resolve conflicts');
+                return;
+              }
+              
+              console.log('✅ PR appears mergeable - proceeding with auto-merge');
+              
+              // Merge the PR
+              console.log('🔀 Merging PR...');
+              const mergeResult = await github.rest.pulls.merge({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: prNumber,
+                commit_title: `Release ${process.env.FINAL_RELEASE_VERSION || 'auto-determined'}`,
+                commit_message: `Merge release PR #${prNumber}\n\nThis release contains version updates from the Maven release process.\n\n- Released version: ${process.env.FINAL_RELEASE_VERSION || 'auto-determined'}\n- Tag: ${process.env.PUSHED_TAG || 'unknown'}\n- Next development version: ${process.env.FINAL_NEXT_VERSION || 'auto-determined'}`,
+                merge_method: 'merge'  // Use merge commit to preserve release history
+              });
+              
+              console.log(`✅ PR merged successfully: ${mergeResult.data.sha}`);
+              console.log(`🔗 Merge commit: ${mergeResult.data.sha}`);
+              
+              // Wait a moment before deleting branch
+              await new Promise(resolve => setTimeout(resolve, 2000));
+              
+              // Delete the release branch
+              console.log(`🗑️  Deleting release branch: ${branchName}`);
+              try {
+                await github.rest.git.deleteRef({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  ref: `heads/${branchName}`
+                });
+                console.log(`✅ Release branch deleted: ${branchName}`);
+              } catch (deleteError) {
+                console.log(`⚠️  Could not delete branch ${branchName}:`, deleteError.message);
+                console.log('🛠️  You may need to delete the branch manually');
+              }
+              
+              // Add comment to merged PR
+              try {
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: prNumber,
+                  body: `## 🎉 Release Completed Successfully\n\n✅ **PR Auto-merged**: Release process completed automatically\n✅ **Branch Cleaned Up**: Release branch \`${branchName}\` has been deleted\n✅ **Tag Available**: Production deployment will be triggered by tag \`${process.env.PUSHED_TAG || 'unknown'}\`\n\n### 📋 Next Steps\n- 🚀 Monitor the production deployment pipeline\n- 📝 Add release notes to the [GitHub release](../../releases/tag/${process.env.PUSHED_TAG || 'unknown'})\n- 📊 Verify application health in production\n\n---\n*This release was automatically completed by the Maven Release workflow*`
+                });
+                console.log('✅ Added completion comment to PR');
+              } catch (commentError) {
+                console.log('⚠️  Could not add comment to PR:', commentError.message);
+              }
+              
+            } catch (error) {
+              console.error('❌ Error in auto-merge process:', error);
+              console.log('🛠️  Manual merge may be required');
+              
+              // Add error comment to PR
+              try {
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: prNumber,
+                  body: `## ⚠️ Auto-merge Failed\n\n❌ **Automatic merge encountered an error**\n\n**Error**: ${error.message}\n\n### 🛠️ Manual Steps Required\n1. **Review this PR** for any issues or conflicts\n2. **Merge manually** if everything looks correct\n3. **Delete the release branch** \`${branchName}\` after merging\n\n---\n*Auto-merge attempted by Maven Release workflow*`
+                });
+              } catch (commentError) {
+                console.log('⚠️  Could not add error comment to PR');
+              }
+              
+              // Don't fail the workflow - this is a nice-to-have feature
+              console.log('ℹ️  Continuing workflow - manual merge will be needed');
+            }
+
       - name: Generate release summary
         if: always()
         run: |
@@ -591,7 +728,7 @@ jobs:
               echo "" >> $GITHUB_STEP_SUMMARY
               echo "### 📋 Next Steps" >> $GITHUB_STEP_SUMMARY
               echo "1. **🚀 Production Deployment**: Tag \`${PUSHED_TAG}\` will trigger CI/CD pipeline" >> $GITHUB_STEP_SUMMARY
-              echo "2. **🔀 Merge PR**: Review and merge the automatically created PR to update main branch" >> $GITHUB_STEP_SUMMARY
+              echo "2. **🔀 Auto-merge**: PR will be automatically merged and release branch deleted" >> $GITHUB_STEP_SUMMARY
               echo "3. **📝 Release Notes**: Add release notes to the GitHub release created by the tag" >> $GITHUB_STEP_SUMMARY
               echo "4. **📊 Monitor**: Check production deployment and application health" >> $GITHUB_STEP_SUMMARY
             fi
