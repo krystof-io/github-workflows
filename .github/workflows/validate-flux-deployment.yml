@@ -140,7 +140,7 @@ jobs:
           CLUSTER_NAME="${{ inputs.cluster_name }}"
           TIMEOUT_SECONDS="${{ inputs.validation_timeout }}"
           
-          echo "🔍 Starting production deployment validation..."
+          echo "🔍 Starting deployment validation..."
           echo "📋 Validation parameters:"
           echo "  App: ${APP_NAME}"
           echo "  Expected Image: ${IMAGE_TAG}"
@@ -314,14 +314,14 @@ jobs:
           kubectl get pods -n ${NAMESPACE} -l app.kubernetes.io/name=${APP_NAME} --context=${CLUSTER_NAME} -o wide 2>/dev/null || \
           kubectl get pods -n ${NAMESPACE} -l app.kubernetes.io/instance=${APP_NAME} --context=${CLUSTER_NAME} -o wide 2>/dev/null || \
           echo "  Could not find pods with standard labels"
-          
-          echo "🎉 Production deployment validation completed successfully!"
+
+          echo "🎉 ${APP_NAME} ${NAMESPACE} deployment validation completed successfully!"
 
       - name: Report validation results
         if: always()
         run: |
           if [[ "${{ job.status }}" == "success" ]]; then
-            echo "## ✅ Production Deployment Validation - PASSED" >> $GITHUB_STEP_SUMMARY
+            echo "## ✅ ${APP_NAME} ${NAMESPACE} Deployment Validation - PASSED" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "### 📊 Validation Results" >> $GITHUB_STEP_SUMMARY
             echo "- ✅ **Deployment Status**: Ready" >> $GITHUB_STEP_SUMMARY
@@ -335,10 +335,10 @@ jobs:
             echo "- **Namespace**: ${{ inputs.target_namespace }}" >> $GITHUB_STEP_SUMMARY
             echo "- **Cluster**: ${{ inputs.cluster_name }}" >> $GITHUB_STEP_SUMMARY
           else
-            echo "## ❌ Production Deployment Validation - FAILED" >> $GITHUB_STEP_SUMMARY
+            echo "## ❌ ${APP_NAME} ${NAMESPACE} Deployment Validation - FAILED" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "### 🚨 Validation Failed" >> $GITHUB_STEP_SUMMARY
-            echo "The production deployment validation failed. Check the logs above for details." >> $GITHUB_STEP_SUMMARY
+            echo "The ${APP_NAME} ${NAMESPACE} deployment validation failed. Check the logs above for details." >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "### 🔍 Troubleshooting Steps" >> $GITHUB_STEP_SUMMARY
             echo "1. **Check Deployment Status**: \`kubectl get deployment ${{ inputs.app_name }} -n ${{ inputs.target_namespace }}\`" >> $GITHUB_STEP_SUMMARY
