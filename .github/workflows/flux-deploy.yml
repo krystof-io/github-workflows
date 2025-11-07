@@ -1,5 +1,5 @@
 # Reusable workflow for deploying applications via GitOps using Flux
-# Location: github-workflows repo at .github/workflows/shared/flux-deploy.yml
+# Location: github-workflows repo at .github/workflows/flux-deploy.yml
 
 name: Flux GitOps Deploy
 

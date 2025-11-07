@@ -1,5 +1,5 @@
 # Reusable workflow for running SonarQube analysis and OWASP dependency checks
-# Location: github-workflows repo at .github/workflows/shared/sonar-scan.yml
+# Location: github-workflows repo at .github/workflows/sonar-scan.yml
 
 name: Sonar Scan
 
