@@ -153,6 +153,7 @@ jobs:
               -DdevelopmentVersion=${NEXT_VERSION} \
               -Dtag=${TAG_NAME} \
               -DpreparationGoals=validate \
+              -DpushChanges=false \
               ${PROFILES}
           else
             CURRENT_VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
@@ -166,6 +167,7 @@ jobs:
             mvn release:prepare \
               -Dtag=${TAG_NAME} \
               -DpreparationGoals=validate \
+              -DpushChanges=false \
               ${PROFILES}
           fi
           
@@ -173,29 +175,25 @@ jobs:
           echo "CREATED_TAG=${TAG_NAME}" >> $GITHUB_ENV
           
           echo "✅ Maven release:prepare completed successfully"
-          echo "✅ Tag ${TAG_NAME} has been created and pushed"
+          echo "✅ Tag ${TAG_NAME} has been created locally (not yet pushed)"
         env:
           MAVEN_REPO_USERNAME: ${{ secrets.MAVEN_REPO_USERNAME }}
           MAVEN_REPO_PASSWORD: ${{ secrets.MAVEN_REPO_PASSWORD }}
 
-      - name: Perform Maven release:perform
+      - name: Push git tags and commits
         if: ${{ !inputs.dry_run }}
         run: |
-          echo "🚀 Performing Maven release:perform..."
+          echo "🚀 Pushing git tags and commits..."
           
-          PROFILES=""
-          if [ -n "${{ inputs.maven_profiles }}" ]; then
-            PROFILES="-P${{ inputs.maven_profiles }}"
-          fi
+          # Push all commits (including the release commit and next development version commit)
+          git push origin main
           
-          # Execute release:perform using local checkout (no need to checkout code again)
-          mvn release:perform -DlocalCheckout=true ${PROFILES}
+          # Push the release tag
+          git push origin ${CREATED_TAG}
           
-          echo "✅ Maven release:perform completed successfully"
-          echo "✅ Release artifacts have been built and deployed to repository"
-        env:
-          MAVEN_REPO_USERNAME: ${{ secrets.MAVEN_REPO_USERNAME }}
-          MAVEN_REPO_PASSWORD: ${{ secrets.MAVEN_REPO_PASSWORD }}
+          echo "✅ Git commits and tags pushed successfully"
+          echo "✅ Tag ${CREATED_TAG} is now available on remote repository"
+          echo "✅ POM version changes have been committed and pushed"
 
       - name: Generate release summary
         if: always()
@@ -224,10 +222,6 @@ jobs:
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "The Maven release process encountered an error. Check the logs above for details." >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
-            echo "### �️ Troubleshooting" >> $GITHUB_STEP_SUMMARY
-            echo "1. Check if the version already exists" >> $GITHUB_STEP_SUMMARY
-            echo "2. Verify Maven release plugin configuration in pom.xml" >> $GITHUB_STEP_SUMMARY
-            echo "3. Ensure you have the necessary permissions" >> $GITHUB_STEP_SUMMARY
           fi
           
           echo "" >> $GITHUB_STEP_SUMMARY
