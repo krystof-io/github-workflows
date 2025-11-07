@@ -188,8 +188,8 @@ jobs:
             PROFILES="-P${{ inputs.maven_profiles }}"
           fi
           
-          # Execute release:perform to build and deploy the release artifacts
-          mvn release:perform ${PROFILES}
+          # Execute release:perform using local checkout (no need to checkout code again)
+          mvn release:perform -DlocalCheckout=true ${PROFILES}
           
           echo "✅ Maven release:perform completed successfully"
           echo "✅ Release artifacts have been built and deployed to repository"
