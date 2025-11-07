@@ -30,18 +30,10 @@ on:
         required: true
         type: string
         description: 'Name of the target cluster'
-      deployment_method:
-        required: true
-        type: string
-        description: 'Deployment method: direct-commit or pull-request'
       commit_message_suffix:
         default: ''
         type: string
         description: 'Additional suffix for commit message'
-      pr_auto_merge:
-        default: false
-        type: boolean
-        description: 'Enable auto-merge for pull requests (only used with pull-request method)'
     secrets:
       CICD_TOKEN:
         required: true
@@ -64,9 +56,7 @@ jobs:
           IMAGE_TAG="${{ inputs.image_tag }}"
           CLUSTER_PATH="${{ inputs.cluster_path }}"
           CLUSTER_NAME="${{ inputs.cluster_name }}"
-          DEPLOYMENT_METHOD="${{ inputs.deployment_method }}"
           COMMIT_SUFFIX="${{ inputs.commit_message_suffix }}"
-          PR_AUTO_MERGE="${{ inputs.pr_auto_merge }}"
           
           # Function to apply our specific changes
           apply_changes() {
@@ -110,73 +100,17 @@ jobs:
             fi
           }
           
-          # Function for direct commit deployment with retry logic
-          deploy_direct_commit() {
-            local max_attempts=5
-            local attempt=1
-            
-            while [ $attempt -le $max_attempts ]; do
-              echo "🚀 Direct commit deployment attempt $attempt of $max_attempts for ${CLUSTER_NAME} cluster"
-              
-              # Always pull latest changes before making modifications
-              echo "📥 Fetching latest changes from GitOps repo..."
-              git fetch origin main
-              git reset --hard origin/main
-              
-              # Apply our changes
-              apply_changes
-              
-              # Check if there are any changes to commit
-              if git diff --quiet && git diff --cached --quiet; then
-                echo "✅ No changes to commit - deployment is already current"
-                return 0
-              fi
-              
-              # Show what we're about to commit
-              echo "📝 Changes to be committed:"
-              git diff --name-status
-              
-              # Commit changes
-              git add .
-              git commit -m "Deploy ${APP_NAME} ${IMAGE_TAG} to ${NAMESPACE} on ${CLUSTER_NAME} cluster [attempt $attempt]${COMMIT_SUFFIX}
-
-              - Image: ${IMAGE_TAG}
-              - Triggered by: ${{ github.actor }}
-              - Commit: ${{ github.sha }}
-              - Workflow: ${{ github.run_id }}"
-              
-              # Try to push
-              echo "📤 Attempting to push changes..."
-              if git push origin main; then
-                echo "✅ Successfully deployed ${APP_NAME} to ${CLUSTER_NAME} cluster on attempt $attempt"
-                return 0
-              else
-                echo "❌ Push failed on attempt $attempt"
-                if [ $attempt -lt $max_attempts ]; then
-                  # Calculate backoff delay (exponential: 2, 4, 8, 16 seconds)
-                  local delay=$((2 ** attempt))
-                  echo "⏳ Waiting ${delay} seconds before retry..."
-                  sleep $delay
-                fi
-                attempt=$((attempt + 1))
-              fi
-            done
-            
-            echo "💥 Failed to deploy after $max_attempts attempts"
-            echo "This could indicate:"
-            echo "  - High concurrent deployment activity"
-            echo "  - Network connectivity issues"
-            echo "  - GitOps repository access problems"
-            echo "  - Conflicting manual changes in the repository"
-            return 1
-          }
-          
           # Function for pull request deployment
           deploy_pull_request() {
             echo "🚀 Creating pull request deployment for ${CLUSTER_NAME} cluster"
             
+            # Always fetch latest changes first
+            echo "📥 Fetching latest changes from GitOps repo..."
+            git fetch origin main
+            git reset --hard origin/main
+            
             # Create feature branch
-            BRANCH_NAME="deploy/${APP_NAME}/${IMAGE_TAG}-${CLUSTER_NAME}"
+            BRANCH_NAME="deploy/${APP_NAME}/${IMAGE_TAG}-${CLUSTER_NAME}-$(date +%s)"
             git checkout -b "${BRANCH_NAME}"
             
             # Apply our changes
@@ -188,36 +122,45 @@ jobs:
               return 0
             fi
             
+            # Show what we're about to commit
+            echo "📝 Changes to be committed:"
+            git diff --name-status
+            
             # Commit and push branch
             git add .
-            git commit -m "Deploy ${APP_NAME} ${IMAGE_TAG} to ${NAMESPACE} on ${CLUSTER_NAME}${COMMIT_SUFFIX}"
+            git commit -m "Deploy ${APP_NAME} ${IMAGE_TAG} to ${NAMESPACE} on ${CLUSTER_NAME}${COMMIT_SUFFIX}
+
+            - Image: ${IMAGE_TAG}
+            - Triggered by: ${{ github.actor }}
+            - Commit: ${{ github.sha }}
+            - Workflow: ${{ github.run_id }}"
+            
             git push origin "${BRANCH_NAME}"
             
             # Create Pull Request using GitHub CLI
             export GITHUB_TOKEN="${{ secrets.CICD_TOKEN }}"
+            
+            echo "📋 Creating pull request..."
             gh pr create \
               --repo "${GITOPS_REPO}" \
               --title "Deploy ${APP_NAME} ${IMAGE_TAG} to ${NAMESPACE} (${CLUSTER_NAME} cluster)" \
               --body "Automated deployment PR for ${APP_NAME} version ${IMAGE_TAG}
 
-              **Cluster**: ${CLUSTER_NAME}
-              **Image**: \`${IMAGE_TAG}\`
-              **Target**: ${NAMESPACE} namespace in ${CLUSTER_PATH}
-              **Triggered by**: ${{ github.actor }}
-              **Workflow**: ${{ github.run_id }}${COMMIT_SUFFIX}
-
-              This PR will auto-merge once all required checks pass." \
+            **Cluster**: ${CLUSTER_NAME}
+            **Image**: \`${IMAGE_TAG}\`
+            **Target**: ${NAMESPACE} namespace in ${CLUSTER_PATH}
+            **Triggered by**: ${{ github.actor }}
+            **Workflow**: ${{ github.run_id }}${COMMIT_SUFFIX}
+            
+            This PR will be automatically merged after creation." \
               --base main \
               --head "${BRANCH_NAME}"
             
-            # Enable auto-merge if requested
-            if [ "$PR_AUTO_MERGE" = "true" ]; then
-              gh pr merge "${BRANCH_NAME}" --repo "${GITOPS_REPO}" --auto --squash --delete-branch
-              echo "✅ Created PR for ${CLUSTER_NAME} cluster with auto-merge and auto-delete branch enabled"
-            else
-              echo "✅ Created PR for ${CLUSTER_NAME} cluster (manual merge required)"
-              echo "💡 To enable auto-delete branch, you can run: gh pr merge ${BRANCH_NAME} --repo ${GITOPS_REPO} --squash --delete-branch"
-            fi
+            echo "🔄 Merging pull request..."
+            # Merge the PR immediately and delete the branch
+            gh pr merge "${BRANCH_NAME}" --repo "${GITOPS_REPO}" --squash --delete-branch
+            
+            echo "✅ Created and merged PR for ${CLUSTER_NAME} cluster, branch deleted"
           }
           
           # Clone GitOps repo
@@ -237,25 +180,12 @@ jobs:
           echo "  Application: ${APP_NAME}"
           echo "  Image tag: ${IMAGE_TAG}"
           echo "  Namespace: ${NAMESPACE}"
-          echo "  Deployment method: ${DEPLOYMENT_METHOD}"
+          echo "  Deployment method: pull-request (auto-merge)"
           
-          # Execute deployment based on method
-          if [ "$DEPLOYMENT_METHOD" = "direct-commit" ]; then
-            if deploy_direct_commit; then
-              echo "🎉 Direct commit deployment completed successfully!"
-            else
-              echo "💥 Direct commit deployment failed after all retry attempts"
-              exit 1
-            fi
-          elif [ "$DEPLOYMENT_METHOD" = "pull-request" ]; then
-            if deploy_pull_request; then
-              echo "🎉 Pull request deployment completed successfully!"
-            else
-              echo "💥 Pull request deployment failed"
-              exit 1
-            fi
+          # Execute deployment using pull request method
+          if deploy_pull_request; then
+            echo "🎉 Pull request deployment completed successfully!"
           else
-            echo "❌ Invalid deployment method: ${DEPLOYMENT_METHOD}"
-            echo "Valid methods are: direct-commit, pull-request"
+            echo "💥 Pull request deployment failed"
             exit 1
           fi
