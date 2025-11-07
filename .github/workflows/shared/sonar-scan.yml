@@ -1,0 +1,112 @@
+# Reusable workflow for running SonarQube analysis and OWASP dependency checks
+# Location: github-workflows repo at .github/workflows/shared/sonar-scan.yml
+
+name: Sonar Scan
+
+on:
+  workflow_call:
+    inputs:
+      java_version:
+        default: '21'
+        type: string
+        description: 'Java version to use'
+      maven_profiles:
+        default: ''
+        type: string
+        description: 'Maven profiles to activate (comma-separated)'
+    secrets:
+      MAVEN_REPO_USERNAME:
+        required: true
+      MAVEN_REPO_PASSWORD:
+        required: true
+      SONAR_TOKEN:
+        required: true
+      SONAR_HOST_URL:
+        required: true
+      NVD_API_KEY:
+        required: true
+      S3_CACHE_ACCESS_KEY:
+        required: true
+      S3_CACHE_SECRET_KEY:
+        required: true
+
+jobs:
+  sonar-scan:
+    runs-on: arc-runners-javadev
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 #v5
+        
+      - name: Initialize Maven settings
+        uses: s4u/maven-settings-action@v3.1.0
+        with:
+          servers: |
+            [
+            {"id": "private-snapshots", "username": "${{ env.MAVEN_REPO_USERNAME }}", "password": "${{ env.MAVEN_REPO_PASSWORD }}"},
+            {"id": "private-releases", "username": "${{ env.MAVEN_REPO_USERNAME }}", "password": "${{ env.MAVEN_REPO_PASSWORD }}"},
+            {"id": "nexus", "username": "${{ env.MAVEN_REPO_USERNAME }}", "password": "${{ env.MAVEN_REPO_PASSWORD }}"}
+            ]
+          mirrors: |
+            [
+            {"id": "nexus", "name":"nexus", "mirrorOf":"*", "url":"${{ env.MAVEN_REPO_URL }}"}
+            ]
+          sonatypeSnapshots: true          
+        env:
+          MAVEN_REPO_USERNAME: ${{ secrets.MAVEN_REPO_USERNAME }}
+          MAVEN_REPO_PASSWORD: ${{ secrets.MAVEN_REPO_PASSWORD }}
+          MAVEN_REPO_URL: ${{ vars.MAVEN_REPO_URL }}  
+            
+      - uses: krystof-io/cache@v4.3.0-1.0.0
+        with:
+          path: ~/.m2/repository
+          key: maven-cache-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            maven-cache-
+        env:
+          RUNS_ON_S3_BUCKET_CACHE: 'runner-caches'
+          AWS_ACCESS_KEY_ID: ${{ secrets.S3_CACHE_ACCESS_KEY }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.S3_CACHE_SECRET_KEY }}
+          RUNS_ON_S3_BUCKET_ENDPOINT: ${{ vars.S3_CACHE_ENDPOINT }}
+          RUNS_ON_AWS_REGION: 'default'
+          RUNS_ON_S3_FORCE_PATH_STYLE: 'true'
+                    
+      - uses: krystof-io/cache@v4.3.0-1.0.0
+        with:
+          path: ~/.m2/repository/org/owasp/dependency-check-data
+          key: ${{ runner.os }}-owasp-data-${{ hashFiles('**/pom.xml') }}-${{ github.run_id }}
+          restore-keys: |
+            ${{ runner.os }}-owasp-data-
+        env:
+          RUNS_ON_S3_BUCKET_CACHE: 'runner-caches'
+          AWS_ACCESS_KEY_ID: ${{ secrets.S3_CACHE_ACCESS_KEY }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.S3_CACHE_SECRET_KEY }}
+          RUNS_ON_S3_BUCKET_ENDPOINT: ${{ vars.S3_CACHE_ENDPOINT }}
+          RUNS_ON_AWS_REGION: 'default'
+          RUNS_ON_S3_FORCE_PATH_STYLE: 'true'
+          RUNS_ON_GLOBAL_CACHE_PREFIX: 'cache-global' # This gets shared across repos
+
+      - name: Pre Sonar Build
+        run: |
+          PROFILES=""
+          if [ -n "${{ inputs.maven_profiles }}" ]; then
+            PROFILES="-P${{ inputs.maven_profiles }}"
+          fi
+          mvn clean verify ${PROFILES}
+                    
+      - name: Pre Sonar Dep Check
+        run: |
+          mvn org.owasp:dependency-check-maven:12.1.8:check \
+            -Dformats=HTML,XML,JSON \
+            -DnvdApiKey=${{ env.NVD_API_KEY }} \
+            -DskipTests 
+        env:
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+
+      - name: Sonar Analysis
+        run: |
+          mvn sonar:sonar \
+            -Dsonar.host.url=${{ env.SONAR_HOST_URL }} \
+            -Dsonar.token=${{ env.SONAR_TOKEN }}
+        env:
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}

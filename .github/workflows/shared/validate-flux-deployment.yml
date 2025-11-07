@@ -1,5 +1,5 @@
 # Workflow to validate flux deployments after gitops reconciliation
-# Location: github-workflows repo at .github/workflows/validate-flux-deployment.yml
+# Location: github-workflows repo at .github/workflows/shared/validate-flux-deployment.yml
 
 name: Validate Flux Deployment
 

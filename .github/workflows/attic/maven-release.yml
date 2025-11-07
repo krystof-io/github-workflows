@@ -1,0 +1,862 @@
+# Reusable workflow for Maven releases of Java applications
+# Location: github-workflows repo at .github/workflows/maven-release.yml
+#mvn release:clean && sleep 1 && mvn -B clean release:prepare -DdryRun=true -Dresume=false 
+    #&& sleep 1 &&mvn release:clean
+#mvn release:clean && sleep 1 && mvn -B release:prepare -DpreparationGoals=validate 
+    #&& sleep 1 && git push --tags && sleep 1 && git push && sleep 1 && git push --tags --dry-run && sleep 1 && mvn release:clean        
+
+name: Maven Release
+
+on:
+  workflow_call:
+    inputs:
+      maven_profiles:
+        default: ''
+        type: string
+        description: 'Maven profiles to activate (comma-separated)'
+      release_version:
+        required: false
+        type: string
+        description: 'Override release version (e.g., 1.0.0). If not specified, Maven will determine automatically'
+      next_development_version:
+        required: false
+        type: string
+        description: 'Override next development version (e.g., 1.1.0-SNAPSHOT). If not specified, Maven will determine automatically'
+      dry_run:
+        default: false
+        type: boolean
+        description: 'Perform a dry run (no actual release)'
+      git_user_name:
+        default: 'github-actions[bot]'
+        type: string
+        description: 'Git user name for commits'
+      git_user_email:
+        default: 'github-actions[bot]@users.noreply.github.com'
+        type: string
+        description: 'Git user email for commits'
+    secrets:
+      MAVEN_REPO_USERNAME:
+        required: true
+      MAVEN_REPO_PASSWORD:
+        required: true
+      CICD_TOKEN:
+        required: true
+        description: 'Personal Access Token to trigger CI/CD workflows Required for our tag pushes to execute other workflows per Github standards.'
+
+jobs:
+  # Validate inputs
+  validate-inputs:
+    runs-on: arc-runners-javadev
+    outputs:
+      release_version: ${{ steps.validate.outputs.release_version }}
+      next_version: ${{ steps.validate.outputs.next_version }}
+      use_version_overrides: ${{ steps.validate.outputs.use_version_overrides }}
+    steps:
+      - name: Validate release inputs
+        id: validate
+        run: |
+          RELEASE_VERSION="${{ inputs.release_version }}"
+          NEXT_VERSION="${{ inputs.next_development_version }}"
+          
+          echo "🔍 Validating release inputs..."
+          echo "Dry run: ${{ inputs.dry_run }}"
+          
+          # Check if version overrides are provided
+          if [ -n "${RELEASE_VERSION}" ] || [ -n "${NEXT_VERSION}" ]; then
+            echo "📝 Version overrides provided"
+            
+            # If one version is provided, both must be provided
+            if [ -z "${RELEASE_VERSION}" ] || [ -z "${NEXT_VERSION}" ]; then
+              echo "❌ If providing version overrides, both release_version and next_development_version must be specified"
+              exit 1
+            fi
+            
+            echo "Release version override: ${RELEASE_VERSION}"
+            echo "Next development version override: ${NEXT_VERSION}"
+            
+            # Validate release version format (should not contain SNAPSHOT)
+            if [[ "${RELEASE_VERSION}" == *"SNAPSHOT"* ]]; then
+              echo "❌ Release version should not contain SNAPSHOT"
+              exit 1
+            fi
+            
+            # Validate next development version format (should contain SNAPSHOT)
+            if [[ "${NEXT_VERSION}" != *"SNAPSHOT"* ]]; then
+              echo "❌ Next development version should contain SNAPSHOT"
+              exit 1
+            fi
+            
+            # Basic semver validation for release version
+            if ! [[ "${RELEASE_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "❌ Release version should follow semver format (x.y.z)"
+              exit 1
+            fi
+            
+            echo "✅ Release version override: ${RELEASE_VERSION}"
+            echo "✅ Next development version override: ${NEXT_VERSION}"
+            echo "use_version_overrides=true" >> $GITHUB_OUTPUT
+          else
+            echo "🤖 No version overrides provided - Maven will determine versions automatically"
+            echo "use_version_overrides=false" >> $GITHUB_OUTPUT
+          fi
+          
+          echo "release_version=${RELEASE_VERSION}" >> $GITHUB_OUTPUT
+          echo "next_version=${NEXT_VERSION}" >> $GITHUB_OUTPUT
+
+  # Perform Maven release
+  maven-release:
+    runs-on: arc-runners-javadev
+    needs: validate-inputs
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 #v5
+        with:
+          # Use Personal Access Token to allow triggering other workflows
+          token: ${{ secrets.CICD_TOKEN}}
+
+      - uses: krystof-io/cache@v4.3.0-1.0.0
+        with:
+          path: ~/.m2/repository
+          key: maven-cache-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            maven-cache-          
+        env:
+          RUNS_ON_S3_BUCKET_CACHE: 'runner-caches'
+          AWS_ACCESS_KEY_ID: ${{ secrets.S3_CACHE_ACCESS_KEY }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.S3_CACHE_SECRET_KEY }}
+          RUNS_ON_S3_BUCKET_ENDPOINT: ${{ vars.S3_CACHE_ENDPOINT }}
+          RUNS_ON_AWS_REGION: 'default'
+          RUNS_ON_S3_FORCE_PATH_STYLE: 'true'
+
+      - name: Configure Git
+        run: |
+          git config user.name "${{ inputs.git_user_name }}"
+          git config user.email "${{ inputs.git_user_email }}"
+
+      - name: Initialize Maven settings
+        uses: s4u/maven-settings-action@v3.1.0
+        with:
+          servers: |
+            [
+            {"id": "private-snapshots", "username": "${{ env.MAVEN_REPO_USERNAME }}", "password": "${{ env.MAVEN_REPO_PASSWORD }}"},
+            {"id": "private-releases", "username": "${{ env.MAVEN_REPO_USERNAME }}", "password": "${{ env.MAVEN_REPO_PASSWORD }}"},
+            {"id": "nexus", "username": "${{ env.MAVEN_REPO_USERNAME }}", "password": "${{ env.MAVEN_REPO_PASSWORD }}"}
+            ]
+          mirrors: |
+            [
+            {"id": "nexus", "name":"nexus", "mirrorOf":"*", "url":"${{ env.MAVEN_REPO_URL }}"}
+            ]
+          sonatypeSnapshots: true          
+        env:
+          MAVEN_REPO_USERNAME: ${{ secrets.MAVEN_REPO_USERNAME }}
+          MAVEN_REPO_PASSWORD: ${{ secrets.MAVEN_REPO_PASSWORD }}
+          MAVEN_REPO_URL: ${{ vars.MAVEN_REPO_URL }}
+
+      - name: Verify project state
+        run: |
+          echo "📋 Current project state:"
+          echo "Current version: $(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)"
+          echo "Project name: $(mvn help:evaluate -Dexpression=project.artifactId -q -DforceStdout)"
+          echo "Group ID: $(mvn help:evaluate -Dexpression=project.groupId -q -DforceStdout)"
+          
+          # Verify we have maven-release-plugin configured
+          if ! mvn help:describe -Dplugin=org.apache.maven.plugins:maven-release-plugin > /dev/null 2>&1; then
+            echo "⚠️  maven-release-plugin not found in pom.xml"
+            echo "The plugin will be used with default configuration"
+          else
+            echo "✅ maven-release-plugin is configured"
+          fi
+
+      - name: Create release branch
+        if: ${{ !inputs.dry_run }}
+        run: |
+          if [[ "${{ needs.validate-inputs.outputs.use_version_overrides }}" == "true" ]]; then
+            RELEASE_VERSION="${{ needs.validate-inputs.outputs.release_version }}"
+          else
+            # Determine release version from pom.xml (remove -SNAPSHOT)
+            CURRENT_VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
+            RELEASE_VERSION=${CURRENT_VERSION%-SNAPSHOT}
+          fi
+          
+          BRANCH_NAME="release/${RELEASE_VERSION}"
+          TAG_NAME="v${RELEASE_VERSION}"
+          
+          echo "� Checking if release already exists..."
+          echo "Branch to create: ${BRANCH_NAME}"
+          echo "Tag to create: ${TAG_NAME}"
+          
+          # Check if release branch already exists (locally or remotely)
+          BRANCH_EXISTS_LOCAL=$(git branch --list "${BRANCH_NAME}" | wc -l)
+          BRANCH_EXISTS_REMOTE=$(git ls-remote --heads origin "${BRANCH_NAME}" | wc -l)
+          
+          # Check if tag already exists (locally or remotely)
+          TAG_EXISTS_LOCAL=$(git tag -l "${TAG_NAME}" | wc -l)
+          TAG_EXISTS_REMOTE=$(git ls-remote --tags origin "${TAG_NAME}" | wc -l)
+          
+          # Report findings
+          echo ""
+          echo "📋 Release status check:"
+          echo "  Local branch exists: $([[ $BRANCH_EXISTS_LOCAL -gt 0 ]] && echo "YES" || echo "NO")"
+          echo "  Remote branch exists: $([[ $BRANCH_EXISTS_REMOTE -gt 0 ]] && echo "YES" || echo "NO")"
+          echo "  Local tag exists: $([[ $TAG_EXISTS_LOCAL -gt 0 ]] && echo "YES" || echo "NO")"
+          echo "  Remote tag exists: $([[ $TAG_EXISTS_REMOTE -gt 0 ]] && echo "YES" || echo "NO")"
+          
+          # Handle existing release artifacts
+          if [[ $BRANCH_EXISTS_REMOTE -gt 0 ]] || [[ $TAG_EXISTS_REMOTE -gt 0 ]]; then
+            echo ""
+            echo "🚨 RELEASE ALREADY EXISTS!"
+            echo ""
+            echo "❌ Cannot proceed with release ${RELEASE_VERSION} because:"
+            
+            if [[ $BRANCH_EXISTS_REMOTE -gt 0 ]]; then
+              echo "   • Release branch '${BRANCH_NAME}' already exists in the repository"
+            fi
+            
+            if [[ $TAG_EXISTS_REMOTE -gt 0 ]]; then
+              echo "   • Release tag '${TAG_NAME}' already exists in the repository"
+            fi
+            
+            echo ""
+            echo "� This usually means:"
+            echo "   • Version ${RELEASE_VERSION} has already been released"
+            echo "   • The release branch hasn't been merged back to main yet"
+            echo "   • A previous release attempt failed and wasn't cleaned up properly"
+            echo ""
+            echo "🛠️  To resolve this issue, you can:"
+            echo ""
+            echo "   1️⃣  MERGE EXISTING RELEASE (Recommended if release was successful):"
+            echo "      • Check if there's an open PR for branch '${BRANCH_NAME}'"
+            echo "      • Review and merge the PR to complete the release process"
+            echo "      • Link: https://github.com/${{ github.repository }}/pulls?q=is:pr+head:${BRANCH_NAME}"
+            echo ""
+            echo "   2️⃣  CLEANUP PARTIAL RELEASE (If previous release failed):"
+            echo "      • Delete the release branch: git push origin --delete ${BRANCH_NAME}"
+            echo "      • Delete the release tag: git push origin --delete ${TAG_NAME}"
+            echo "      • Then retry this workflow"
+            echo ""
+            echo "   3️⃣  INCREMENT VERSION (If you want a new release):"
+            echo "      • Update the version in pom.xml to the next release version"
+            echo "      • Or use version override inputs when running this workflow"
+            echo ""
+            echo "   4️⃣  FORCE RELEASE (Advanced - use with caution):"
+            echo "      • Manually delete the existing branch and tag"
+            echo "      • This may cause issues if the release was already deployed"
+            echo ""
+            echo "📞 Need help? Contact the DevOps team with this error message."
+            echo ""
+            
+            # Also add to step summary for better visibility
+            echo "## ❌ Release Already Exists" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Cannot create release **${RELEASE_VERSION}** because it already exists." >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### 🔍 Existing Artifacts Found" >> $GITHUB_STEP_SUMMARY
+            [[ $BRANCH_EXISTS_REMOTE -gt 0 ]] && echo "- ❌ Branch: \`${BRANCH_NAME}\`" >> $GITHUB_STEP_SUMMARY
+            [[ $TAG_EXISTS_REMOTE -gt 0 ]] && echo "- ❌ Tag: \`${TAG_NAME}\`" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### 🛠️ Resolution Options" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "1. **Merge Existing Release** (if release was successful)" >> $GITHUB_STEP_SUMMARY
+            echo "   - [Check for open PRs](https://github.com/${{ github.repository }}/pulls?q=is:pr+head:${BRANCH_NAME})" >> $GITHUB_STEP_SUMMARY
+            echo "   - Review and merge the existing PR" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "2. **Clean Up Failed Release** (if release failed previously)" >> $GITHUB_STEP_SUMMARY
+            echo "   - Delete branch: \`git push origin --delete ${BRANCH_NAME}\`" >> $GITHUB_STEP_SUMMARY
+            echo "   - Delete tag: \`git push origin --delete ${TAG_NAME}\`" >> $GITHUB_STEP_SUMMARY
+            echo "   - Retry this workflow" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "3. **Increment Version** (for new release)" >> $GITHUB_STEP_SUMMARY
+            echo "   - Update version in pom.xml" >> $GITHUB_STEP_SUMMARY
+            echo "   - Or use version override inputs" >> $GITHUB_STEP_SUMMARY
+            
+            exit 1
+          fi
+          
+          # Clean up any local artifacts that might exist
+          if [[ $BRANCH_EXISTS_LOCAL -gt 0 ]]; then
+            echo "🧹 Cleaning up existing local branch..."
+            git branch -D "${BRANCH_NAME}" || true
+          fi
+          
+          if [[ $TAG_EXISTS_LOCAL -gt 0 ]]; then
+            echo "🧹 Cleaning up existing local tag..."
+            git tag -d "${TAG_NAME}" || true
+          fi
+          
+          # Create the release branch
+          echo ""
+          echo "✅ Creating release branch: ${BRANCH_NAME}"
+          echo "✅ Will create tag: ${TAG_NAME}"
+          
+          git checkout -b "${BRANCH_NAME}"
+          
+          # Try to push the branch
+          if git push origin "${BRANCH_NAME}"; then
+            echo "✅ Successfully created and pushed release branch"
+          else
+            echo "❌ Failed to push release branch"
+            echo "This could indicate a race condition where another release was started simultaneously."
+            exit 1
+          fi
+          
+          # Store the determined version for later steps
+          echo "DETERMINED_RELEASE_VERSION=${RELEASE_VERSION}" >> $GITHUB_ENV
+
+      - name: Dry run - Show what would be released
+        if: ${{ inputs.dry_run }}
+        run: |
+          echo "🔍 DRY RUN MODE - No changes will be made"
+          echo ""
+          echo "Current version: $(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)"
+          
+          PROFILES=""
+          if [ -n "${{ inputs.maven_profiles }}" ]; then
+            PROFILES="-P${{ inputs.maven_profiles }}"
+          fi
+          
+          if [[ "${{ needs.validate-inputs.outputs.use_version_overrides }}" == "true" ]]; then
+            RELEASE_VERSION="${{ needs.validate-inputs.outputs.release_version }}"
+            NEXT_VERSION="${{ needs.validate-inputs.outputs.next_version }}"
+            echo "Would release (override): ${RELEASE_VERSION}"
+            echo "Next dev version (override): ${NEXT_VERSION}"
+            echo "Tag format: v${RELEASE_VERSION}"
+            echo ""
+            echo "Maven release:prepare simulation with version overrides:"
+            
+            mvn release:prepare -DdryRun=true \
+              -DreleaseVersion=${RELEASE_VERSION} \
+              -DdevelopmentVersion=${NEXT_VERSION} \
+              -Dtag=v${RELEASE_VERSION} \
+              -DpushChanges=false \
+              ${PROFILES}
+          else
+            # Determine what Maven would use as release version
+            CURRENT_VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
+            AUTO_RELEASE_VERSION=${CURRENT_VERSION%-SNAPSHOT}
+            
+            echo "Would release: ${AUTO_RELEASE_VERSION} (Maven automatic)"
+            echo "Next dev version: Maven will determine automatically"
+            echo "Tag format: v${AUTO_RELEASE_VERSION}"
+            echo ""
+            echo "Maven release:prepare simulation (automatic versioning with v prefix):"
+            
+            mvn release:prepare -DdryRun=true \
+              -Dtag=v${AUTO_RELEASE_VERSION} \
+              -DpushChanges=false \
+              ${PROFILES}
+          fi
+        env:
+          MAVEN_REPO_USERNAME: ${{ secrets.MAVEN_REPO_USERNAME }}
+          MAVEN_REPO_PASSWORD: ${{ secrets.MAVEN_REPO_PASSWORD }}
+
+      - name: Perform Maven release
+        if: ${{ !inputs.dry_run }}
+        run: |
+          echo "🚀 Performing Maven release ..."
+          
+          PROFILES=""
+          if [ -n "${{ inputs.maven_profiles }}" ]; then
+            PROFILES="-P${{ inputs.maven_profiles }}"
+          fi
+          
+          if [[ "${{ needs.validate-inputs.outputs.use_version_overrides }}" == "true" ]]; then
+            RELEASE_VERSION="${{ needs.validate-inputs.outputs.release_version }}"
+            NEXT_VERSION="${{ needs.validate-inputs.outputs.next_version }}"
+            echo "Using version overrides: ${RELEASE_VERSION} -> ${NEXT_VERSION}"
+            
+            # Maven release:prepare with version overrides
+            mvn release:prepare \
+              -DreleaseVersion=${RELEASE_VERSION} \
+              -DdevelopmentVersion=${NEXT_VERSION} \
+              -Dtag=v${RELEASE_VERSION} \
+              -DpushChanges=false \
+              -DremoteTagging=false \
+              -DpreparationGoals=validate \
+              ${PROFILES}
+              
+            # Store versions for later steps
+            echo "FINAL_RELEASE_VERSION=${RELEASE_VERSION}" >> $GITHUB_ENV
+            echo "FINAL_NEXT_VERSION=${NEXT_VERSION}" >> $GITHUB_ENV
+          else
+            echo "Using automatic Maven versioning with v prefix"
+            
+            # Determine what Maven would use as versions
+            CURRENT_VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
+            AUTO_RELEASE_VERSION=${CURRENT_VERSION%-SNAPSHOT}
+            
+            # Maven release:prepare with explicit tag format to ensure v prefix
+            mvn release:prepare \
+              -Dtag=v${AUTO_RELEASE_VERSION} \
+              -DpushChanges=false \
+              -DremoteTagging=false \
+              -DpreparationGoals=validate \
+              ${PROFILES}
+              
+            # Get the new development version from pom.xml (after release:prepare)
+            NEXT_VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
+            
+            echo "Maven determined versions:"
+            echo "  Release version: ${AUTO_RELEASE_VERSION}"
+            echo "  Next dev version: ${NEXT_VERSION}"
+            echo "  Tag: v${AUTO_RELEASE_VERSION}"
+            
+            # Store versions for later steps
+            echo "FINAL_RELEASE_VERSION=${AUTO_RELEASE_VERSION}" >> $GITHUB_ENV
+            echo "FINAL_NEXT_VERSION=${NEXT_VERSION}" >> $GITHUB_ENV
+            echo "TAG_NAME=v${AUTO_RELEASE_VERSION}" >> $GITHUB_ENV
+          fi
+          
+          echo "✅ Maven release:prepare completed successfully"
+        env:
+          MAVEN_REPO_USERNAME: ${{ secrets.MAVEN_REPO_USERNAME }}
+          MAVEN_REPO_PASSWORD: ${{ secrets.MAVEN_REPO_PASSWORD }}
+
+      - name: Push release changes
+        if: ${{ !inputs.dry_run }}
+        run: |
+          echo "📤 Pushing release changes and tag..."
+          
+          # Determine the tag name
+          if [[ "${{ needs.validate-inputs.outputs.use_version_overrides }}" == "true" ]]; then
+            TAG_TO_PUSH="v${FINAL_RELEASE_VERSION}"
+          else
+            # Use the tag that Maven created (might not have 'v' prefix)
+            TAG_TO_PUSH=$(git tag --sort=-version:refname | head -1)
+          fi
+          
+          # Show what we're about to push
+          echo "Git status:"
+          git status
+          echo ""
+          echo "Recent commits:"
+          git log --oneline -5
+          echo ""
+          echo "Tags to push:"
+          echo "  ${TAG_TO_PUSH}"
+          git tag -l "${TAG_TO_PUSH}"
+          
+          # Push the release branch with version changes
+          git push origin HEAD
+          
+          # Push the release tag with verbose output
+          echo "🏷️  Pushing tag ${TAG_TO_PUSH}..."
+          if git push -v origin "${TAG_TO_PUSH}"; then
+            echo "✅ Git push command completed"
+          else
+            echo "❌ Git push command failed"
+            exit 1
+          fi
+          
+          echo "PUSHED_TAG=${TAG_TO_PUSH}" >> $GITHUB_ENV
+
+      - name: Create Pull Request
+        id: create_pr
+        if: ${{ !inputs.dry_run }}
+        uses: actions/github-script@v7
+        env:
+          FINAL_RELEASE_VERSION: ${{ env.FINAL_RELEASE_VERSION }}
+          FINAL_NEXT_VERSION: ${{ env.FINAL_NEXT_VERSION }}
+          PUSHED_TAG: ${{ env.PUSHED_TAG }}
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            // Use environment variables (should always be set by the Maven release step)
+            const releaseVersion = process.env.FINAL_RELEASE_VERSION || 'auto-determined';
+            const nextVersion = process.env.FINAL_NEXT_VERSION || 'auto-determined';
+            const pushedTag = process.env.PUSHED_TAG || `v${releaseVersion}`;
+            const branchName = `release/${releaseVersion}`;
+            
+            try {
+              const { data: pullRequest } = await github.rest.pulls.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: `Release ${releaseVersion}`,
+                head: branchName,
+                base: 'main',
+                body: `## 🚀 Release ${releaseVersion}
+            
+            This PR contains the version updates from the Maven release process:
+            
+            ### 📦 Application Details
+            - **Maven Profiles**: ${{ inputs.maven_profiles || 'none' }}
+            
+            ### 🔄 Version Changes
+            - ✅ **Released Version**: ${releaseVersion}
+            - ✅ **Created Tag**: \`v${releaseVersion}\`
+            - ✅ **Next Development Version**: ${nextVersion}
+            
+            ### 🎯 What Happens Next
+            1. **🚀 Automatic Deployment**: The tag \`${pushedTag}\` will trigger the production deployment pipeline
+            2. **🔀 Merge This PR**: This will update the main branch with the new development version
+            3. **📝 GitHub Release**: A GitHub release will be automatically created from the tag
+            
+            ### 📋 Release Checklist
+            - [ ] Review the version changes in this PR
+            - [ ] Verify the production deployment completed successfully
+            - [ ] Update release notes in the GitHub release
+            - [ ] Notify stakeholders of the new release
+            
+            ### 🔗 Quick Links
+            - [CI/CD Pipeline](../../actions/workflows/ci-cd.yml)
+            - [Release Tag](../../releases/tag/${pushedTag})
+            - [Production Monitoring](#) <!-- Add your monitoring links -->
+            
+            ---
+            *This PR was automatically created by the Maven Release workflow*`,
+                draft: false
+              });
+              
+              console.log(`✅ Created PR #${pullRequest.number}: ${pullRequest.html_url}`);
+              
+              // Add labels
+              try {
+                await github.rest.issues.addLabels({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: pullRequest.number,
+                  labels: ['release', 'automated']
+                });
+                console.log('✅ Added labels to PR');
+              } catch (labelError) {
+                console.log('ℹ️  Could not add labels (labels may not exist):', labelError.message);
+              }
+              
+              // Set output for summary
+              core.setOutput('pr_number', pullRequest.number);
+              core.setOutput('pr_url', pullRequest.html_url);
+              
+            } catch (error) {
+              console.error('❌ Error creating PR:', error);
+              throw error;
+            }
+
+      - name: Auto-merge and cleanup
+        if: ${{ !inputs.dry_run }}
+        uses: actions/github-script@v7
+        env:
+          PR_NUMBER: ${{ steps.create_pr.outputs.pr_number }}
+          BRANCH_NAME: release/${{ env.FINAL_RELEASE_VERSION }}
+          FINAL_RELEASE_VERSION: ${{ env.FINAL_RELEASE_VERSION }}
+          FINAL_NEXT_VERSION: ${{ env.FINAL_NEXT_VERSION }}
+          PUSHED_TAG: ${{ env.PUSHED_TAG }}
+        with:
+          github-token: ${{ secrets.CICD_TOKEN }}
+          script: |
+            const prNumber = process.env.PR_NUMBER;
+            const branchName = process.env.BRANCH_NAME;
+            
+            if (!prNumber) {
+              console.log('❌ No PR number available - cannot auto-merge');
+              return;
+            }
+            
+            console.log(`🔀 Starting auto-merge process for PR #${prNumber}`);
+            
+            try {
+              // Wait a moment for PR to be fully created
+              console.log('⏳ Waiting 5 seconds for PR to be fully initialized...');
+              await new Promise(resolve => setTimeout(resolve, 5000));
+              
+              // Get PR details to check if it's mergeable
+              const { data: pr } = await github.rest.pulls.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: prNumber
+              });
+              
+              console.log(`📋 PR Status: ${pr.state}`);
+              console.log(`📋 PR Mergeable: ${pr.mergeable}`);
+              console.log(`📋 PR Mergeable State: ${pr.mergeable_state}`);
+              
+              // Check if PR is in a mergeable state
+              if (pr.state !== 'open') {
+                console.log(`❌ PR is not open (state: ${pr.state})`);
+                return;
+              }
+              
+              // Wait for checks if mergeable_state is not clean
+              let attempts = 0;
+              const maxAttempts = 12; // 2 minutes total (10 seconds * 12)
+              
+              while (pr.mergeable_state === 'unknown' && attempts < maxAttempts) {
+                attempts++;
+                console.log(`⏳ Waiting for PR checks to complete (attempt ${attempts}/${maxAttempts})...`);
+                await new Promise(resolve => setTimeout(resolve, 10000));
+                
+                const { data: updatedPr } = await github.rest.pulls.get({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  pull_number: prNumber
+                });
+                
+                pr.mergeable = updatedPr.mergeable;
+                pr.mergeable_state = updatedPr.mergeable_state;
+                console.log(`📋 Updated Mergeable State: ${pr.mergeable_state}`);
+              }
+              
+              // Proceed with merge if possible
+              if (pr.mergeable === false) {
+                console.log('❌ PR has merge conflicts - cannot auto-merge');
+                console.log('🛠️  Manual intervention required to resolve conflicts');
+                return;
+              }
+              
+              console.log('✅ PR appears mergeable - proceeding with auto-merge');
+              
+              // Merge the PR
+              console.log('🔀 Merging PR...');
+              const mergeResult = await github.rest.pulls.merge({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: prNumber,
+                commit_title: `Release ${process.env.FINAL_RELEASE_VERSION || 'auto-determined'}`,
+                commit_message: `Merge release PR #${prNumber}\n\nThis release contains version updates from the Maven release process.\n\n- Released version: ${process.env.FINAL_RELEASE_VERSION || 'auto-determined'}\n- Tag: ${process.env.PUSHED_TAG || 'unknown'}\n- Next development version: ${process.env.FINAL_NEXT_VERSION || 'auto-determined'}`,
+                merge_method: 'merge'  // Use merge commit to preserve release history
+              });
+              
+              console.log(`✅ PR merged successfully: ${mergeResult.data.sha}`);
+              console.log(`🔗 Merge commit: ${mergeResult.data.sha}`);
+              
+              // Wait a moment before deleting branch
+              await new Promise(resolve => setTimeout(resolve, 2000));
+              
+              // Delete the release branch
+              console.log(`🗑️  Deleting release branch: ${branchName}`);
+              try {
+                await github.rest.git.deleteRef({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  ref: `heads/${branchName}`
+                });
+                console.log(`✅ Release branch deleted: ${branchName}`);
+              } catch (deleteError) {
+                console.log(`⚠️  Could not delete branch ${branchName}:`, deleteError.message);
+                console.log('🛠️  You may need to delete the branch manually');
+              }
+              
+              // Add comment to merged PR
+              try {
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: prNumber,
+                  body: `## 🎉 Release Completed Successfully\n\n✅ **PR Auto-merged**: Release process completed automatically\n✅ **Branch Cleaned Up**: Release branch \`${branchName}\` has been deleted\n✅ **Tag Available**: Production deployment will be triggered by tag \`${process.env.PUSHED_TAG || 'unknown'}\`\n\n### 📋 Next Steps\n- 🚀 Monitor the production deployment pipeline\n- 📝 Add release notes to the [GitHub release](../../releases/tag/${process.env.PUSHED_TAG || 'unknown'})\n- 📊 Verify application health in production\n\n---\n*This release was automatically completed by the Maven Release workflow*`
+                });
+                console.log('✅ Added completion comment to PR');
+              } catch (commentError) {
+                console.log('⚠️  Could not add comment to PR:', commentError.message);
+              }
+              
+            } catch (error) {
+              console.error('❌ Error in auto-merge process:', error);
+              console.log('🛠️  Manual merge may be required');
+              
+              // Add error comment to PR
+              try {
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: prNumber,
+                  body: `## ⚠️ Auto-merge Failed\n\n❌ **Automatic merge encountered an error**\n\n**Error**: ${error.message}\n\n### 🛠️ Manual Steps Required\n1. **Review this PR** for any issues or conflicts\n2. **Merge manually** if everything looks correct\n3. **Delete the release branch** \`${branchName}\` after merging\n\n---\n*Auto-merge attempted by Maven Release workflow*`
+                });
+              } catch (commentError) {
+                console.log('⚠️  Could not add error comment to PR');
+              }
+              
+              // Don't fail the workflow - this is a nice-to-have feature
+              console.log('ℹ️  Continuing workflow - manual merge will be needed');
+            }
+
+      - name: Generate release summary
+        if: always()
+        run: |
+          # Check if any previous steps failed
+          WORKFLOW_STATUS="${{ job.status }}"
+          PREVIOUS_STEPS_FAILED="false"
+          
+          # Check job context to determine if we should show success or failure summary
+          if [[ "${WORKFLOW_STATUS}" != "success" ]] && [[ "${{ inputs.dry_run }}" != "true" ]]; then
+            PREVIOUS_STEPS_FAILED="true"
+          fi
+          
+          # Generate appropriate summary based on success/failure
+          if [[ "${PREVIOUS_STEPS_FAILED}" == "true" ]]; then
+            echo "## ❌ Maven Release Failed" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "The Maven release process encountered an error and was not completed." >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### 🔍 What to Check" >> $GITHUB_STEP_SUMMARY
+            echo "1. **Review the workflow logs** above for specific error details" >> $GITHUB_STEP_SUMMARY
+            echo "2. **Check for existing releases** - The version may already exist" >> $GITHUB_STEP_SUMMARY
+            echo "3. **Verify repository permissions** - Ensure the workflow can create branches and tags" >> $GITHUB_STEP_SUMMARY
+            echo "4. **Check Maven configuration** - Ensure release plugin is properly configured" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### 🛠️ Next Steps" >> $GITHUB_STEP_SUMMARY
+            echo "1. **📝 Review Error Details**: Check the failed step logs for specific error messages" >> $GITHUB_STEP_SUMMARY
+            echo "2. **🧹 Clean Up**: If needed, clean up any partially created branches or tags" >> $GITHUB_STEP_SUMMARY
+            echo "3. **🔧 Fix Issues**: Address the root cause identified in the logs" >> $GITHUB_STEP_SUMMARY
+            echo "4. **🔄 Retry**: Re-run the release workflow once issues are resolved" >> $GITHUB_STEP_SUMMARY
+            echo "5. **💬 Get Help**: Contact the DevOps team if you need assistance" >> $GITHUB_STEP_SUMMARY
+          else
+            # Success summary (existing logic)
+            echo "## 🎉 Maven Release Summary" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            
+            if [[ "${{ inputs.dry_run }}" == "true" ]]; then
+              echo "### 🔍 Dry Run Completed" >> $GITHUB_STEP_SUMMARY
+              echo "- **Mode**: Simulation only (no changes made)" >> $GITHUB_STEP_SUMMARY
+              echo "- **Current Version**: $(mvn help:evaluate -Dexpression=project.version -q -DforceStdout 2>/dev/null || echo 'unknown')" >> $GITHUB_STEP_SUMMARY
+              
+              if [[ "${{ needs.validate-inputs.outputs.use_version_overrides }}" == "true" ]]; then
+                echo "- **Would Release (Override)**: ${{ needs.validate-inputs.outputs.release_version }}" >> $GITHUB_STEP_SUMMARY
+                echo "- **Next Dev Version (Override)**: ${{ needs.validate-inputs.outputs.next_version }}" >> $GITHUB_STEP_SUMMARY
+              else
+                echo "- **Versioning**: Maven automatic versioning" >> $GITHUB_STEP_SUMMARY
+              fi
+            else
+              echo "### 🚀 Release Completed Successfully" >> $GITHUB_STEP_SUMMARY
+              echo "- **Released Version**: ${FINAL_RELEASE_VERSION:-unknown}" >> $GITHUB_STEP_SUMMARY
+              echo "- **Git Tag**: ${PUSHED_TAG:-unknown}" >> $GITHUB_STEP_SUMMARY
+              echo "- **Next Dev Version**: ${FINAL_NEXT_VERSION:-unknown}" >> $GITHUB_STEP_SUMMARY
+              echo "- **Release Branch**: release/${FINAL_RELEASE_VERSION:-unknown}" >> $GITHUB_STEP_SUMMARY
+              
+              if [[ "${{ needs.validate-inputs.outputs.use_version_overrides }}" == "true" ]]; then
+                echo "- **Versioning**: Used version overrides" >> $GITHUB_STEP_SUMMARY
+              else
+                echo "- **Versioning**: Maven automatic versioning" >> $GITHUB_STEP_SUMMARY
+              fi
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "### 📋 Next Steps" >> $GITHUB_STEP_SUMMARY
+              echo "1. **🚀 Production Deployment**: Tag \`${PUSHED_TAG}\` will trigger CI/CD pipeline" >> $GITHUB_STEP_SUMMARY
+              echo "2. **🔀 Auto-merge**: PR will be automatically merged and release branch deleted" >> $GITHUB_STEP_SUMMARY
+              echo "3. **📝 Release Notes**: Add release notes to the GitHub release created by the tag" >> $GITHUB_STEP_SUMMARY
+              echo "4. **📊 Monitor**: Check production deployment and application health" >> $GITHUB_STEP_SUMMARY
+            fi
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🔗 Related Links" >> $GITHUB_STEP_SUMMARY
+          echo "- [📋 Actions Run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})" >> $GITHUB_STEP_SUMMARY
+          
+          # Only show release-specific links if the workflow succeeded and it's not a dry run
+          if [[ "${PREVIOUS_STEPS_FAILED}" != "true" ]] && [[ "${{ inputs.dry_run }}" != "true" ]]; then
+            echo "- [🏷️ Release Tag](https://github.com/${{ github.repository }}/releases/tag/${PUSHED_TAG})" >> $GITHUB_STEP_SUMMARY
+            if [[ -n "${FINAL_RELEASE_VERSION}" ]]; then
+              echo "- [🔀 Release Pull Request](https://github.com/${{ github.repository }}/pulls?q=is:pr+head:release/${FINAL_RELEASE_VERSION})" >> $GITHUB_STEP_SUMMARY
+            fi
+            echo "- [🚀 CI/CD Pipeline](https://github.com/${{ github.repository }}/actions/workflows/ci-cd.yml)" >> $GITHUB_STEP_SUMMARY
+          elif [[ "${PREVIOUS_STEPS_FAILED}" == "true" ]]; then
+            echo "- [📚 Troubleshooting Guide](https://github.com/${{ github.repository }}/wiki/Release-Troubleshooting)" >> $GITHUB_STEP_SUMMARY
+            echo "- [💬 Get Support](https://github.com/${{ github.repository }}/issues/new?template=release-issue.md)" >> $GITHUB_STEP_SUMMARY
+          fi
+
+  # Cleanup job that runs on failure to clean up any partial state
+  cleanup-on-failure:
+    runs-on: arc-runners-javadev
+    needs: [validate-inputs, maven-release]
+    if: failure() && !inputs.dry_run
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 #v5
+
+      - name: Configure Git
+        run: |
+          git config user.name "${{ inputs.git_user_name }}"
+          git config user.email "${{ inputs.git_user_email }}"
+
+      - name: Cleanup failed release
+        run: |
+          # Determine release version for cleanup
+          if [[ "${{ needs.validate-inputs.outputs.use_version_overrides }}" == "true" ]]; then
+            RELEASE_VERSION="${{ needs.validate-inputs.outputs.release_version }}"
+            TAG_NAME="v${RELEASE_VERSION}"
+          else
+            # Try to find the tag that Maven created (should always have v prefix now)
+            TAG_NAME=$(git tag --sort=-version:refname | head -1)
+            RELEASE_VERSION=${TAG_NAME#v}  # Remove v prefix to get just the version
+          fi
+          
+          BRANCH_NAME="release/${RELEASE_VERSION}"
+          
+          echo "🧹 Cleaning up failed release..."
+          echo "Release version: ${RELEASE_VERSION}"
+          echo "Tag name: ${TAG_NAME}"
+          echo "Branch name: ${BRANCH_NAME}"
+          echo ""
+          
+          CLEANUP_ACTIONS=""
+          CLEANUP_ERRORS=""
+          
+          # Delete local tag if it exists
+          if git tag -l | grep -q "^${TAG_NAME}$"; then
+            echo "🏷️  Deleting local tag: ${TAG_NAME}"
+            if git tag -d "${TAG_NAME}"; then
+              CLEANUP_ACTIONS="${CLEANUP_ACTIONS}- ✅ Deleted local tag ${TAG_NAME}\n"
+            else
+              CLEANUP_ERRORS="${CLEANUP_ERRORS}- ❌ Failed to delete local tag ${TAG_NAME}\n"
+            fi
+          fi
+          
+          # Delete remote tag if it exists
+          if git ls-remote --tags origin | grep -q "refs/tags/${TAG_NAME}$"; then
+            echo "🏷️  Deleting remote tag: ${TAG_NAME}"
+            if git push origin --delete "${TAG_NAME}"; then
+              CLEANUP_ACTIONS="${CLEANUP_ACTIONS}- ✅ Deleted remote tag ${TAG_NAME}\n"
+            else
+              CLEANUP_ERRORS="${CLEANUP_ERRORS}- ❌ Failed to delete remote tag ${TAG_NAME}\n"
+              echo "⚠️  You may need to manually delete the tag: git push origin --delete ${TAG_NAME}"
+            fi
+          fi
+          
+          # Delete remote branch if it exists
+          if git ls-remote --heads origin | grep -q "refs/heads/${BRANCH_NAME}$"; then
+            echo "🌿 Deleting remote branch: ${BRANCH_NAME}"
+            if git push origin --delete "${BRANCH_NAME}"; then
+              CLEANUP_ACTIONS="${CLEANUP_ACTIONS}- ✅ Deleted remote branch ${BRANCH_NAME}\n"
+            else
+              CLEANUP_ERRORS="${CLEANUP_ERRORS}- ❌ Failed to delete remote branch ${BRANCH_NAME}\n"
+              echo "⚠️  You may need to manually delete the branch: git push origin --delete ${BRANCH_NAME}"
+            fi
+          fi
+          
+          # Report cleanup results
+          echo ""
+          if [[ -n "${CLEANUP_ACTIONS}" ]]; then
+            echo "✅ Cleanup actions completed:"
+            echo -e "${CLEANUP_ACTIONS}"
+          fi
+          
+          if [[ -n "${CLEANUP_ERRORS}" ]]; then
+            echo "❌ Cleanup errors encountered:"
+            echo -e "${CLEANUP_ERRORS}"
+            echo ""
+            echo "🛠️  Manual cleanup may be required:"
+            echo "   • Delete tag: git push origin --delete ${TAG_NAME}"
+            echo "   • Delete branch: git push origin --delete ${BRANCH_NAME}"
+          fi
+          
+          echo ""
+          echo "🔍 Current repository state after cleanup:"
+          echo "Tags:"
+          git tag -l "${TAG_NAME}" || echo "  No local tags found"
+          echo "Branches:"
+          git branch -l "${BRANCH_NAME}" || echo "  No local branches found"
+          echo "Remote references:"
+          git ls-remote --tags origin "${TAG_NAME}" || echo "  No remote tags found"
+          git ls-remote --heads origin "${BRANCH_NAME}" || echo "  No remote branches found"
+          
+          echo "✅ Cleanup process completed"
+
+      - name: Add cleanup summary
+        if: always()
+        run: |
+          echo "### 🧹 Automatic Cleanup Completed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "The following cleanup actions were performed after the release failure:" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- 🔍 **Checked for partial release artifacts**" >> $GITHUB_STEP_SUMMARY
+          echo "- 🏷️ **Removed any partially created tags**" >> $GITHUB_STEP_SUMMARY
+          echo "- 🌿 **Removed any partially created branches**" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ **Reset repository to clean state**" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo " **Repository is now ready for a retry** - you can safely re-run the release workflow." >> $GITHUB_STEP_SUMMARY
