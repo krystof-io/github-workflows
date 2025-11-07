@@ -14,6 +14,31 @@ on:
         default: ''
         type: string
         description: 'Maven profiles to activate (comma-separated)'
+    outputs:
+      sonar_status:
+        description: 'SonarQube analysis status (passed/failed)'
+        value: ${{ jobs.sonar-scan.outputs.sonar_status }}
+      project_key:
+        description: 'SonarQube project key'
+        value: ${{ jobs.sonar-scan.outputs.project_key }}
+      dashboard_url:
+        description: 'SonarQube dashboard URL'
+        value: ${{ jobs.sonar-scan.outputs.dashboard_url }}
+      quality_gate_status:
+        description: 'Quality gate status (OK/ERROR)'
+        value: ${{ jobs.sonar-scan.outputs.quality_gate_status }}
+      bugs:
+        description: 'Number of bugs found'
+        value: ${{ jobs.sonar-scan.outputs.bugs }}
+      vulnerabilities:
+        description: 'Number of security vulnerabilities found'
+        value: ${{ jobs.sonar-scan.outputs.vulnerabilities }}
+      code_smells:
+        description: 'Number of code smells found'
+        value: ${{ jobs.sonar-scan.outputs.code_smells }}
+      coverage:
+        description: 'Test coverage percentage'
+        value: ${{ jobs.sonar-scan.outputs.coverage }}
     secrets:
       MAVEN_REPO_USERNAME:
         required: true
@@ -33,6 +58,15 @@ on:
 jobs:
   sonar-scan:
     runs-on: arc-runners-javadev
+    outputs:
+      sonar_status: ${{ steps.sonar.outputs.sonar_status }}
+      project_key: ${{ steps.sonar.outputs.project_key }}
+      dashboard_url: ${{ steps.sonar.outputs.dashboard_url }}
+      quality_gate_status: ${{ steps.quality-gate.outputs.quality_gate_status }}
+      bugs: ${{ steps.quality-gate.outputs.bugs }}
+      vulnerabilities: ${{ steps.quality-gate.outputs.vulnerabilities }}
+      code_smells: ${{ steps.quality-gate.outputs.code_smells }}
+      coverage: ${{ steps.quality-gate.outputs.coverage }}
     steps:
       - name: Checkout code
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 #v5
@@ -105,12 +139,207 @@ jobs:
           NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
 
       - name: Sonar Analysis with Quality Gate
+        id: sonar
         run: |
+          # Run SonarQube analysis
+          set +e  # Don't exit on failure so we can capture results
+          
           mvn sonar:sonar \
             -Dsonar.host.url=${{ env.SONAR_HOST_URL }} \
             -Dsonar.token=${{ env.SONAR_TOKEN }} \
             -Dsonar.qualitygate.wait=true \
             -Dsonar.qualitygate.timeout=300
+          
+          SONAR_EXIT_CODE=$?
+          
+          # Extract project information from report-task.txt
+          if [ -f "target/sonar/report-task.txt" ]; then
+            PROJECT_KEY=$(grep "projectKey=" target/sonar/report-task.txt | cut -d'=' -f2)
+            TASK_ID=$(grep "ceTaskId=" target/sonar/report-task.txt | cut -d'=' -f2)
+            DASHBOARD_URL=$(grep "dashboardUrl=" target/sonar/report-task.txt | cut -d'=' -f2-)
+            
+            echo "project_key=${PROJECT_KEY}" >> $GITHUB_OUTPUT
+            echo "task_id=${TASK_ID}" >> $GITHUB_OUTPUT
+            echo "dashboard_url=${DASHBOARD_URL}" >> $GITHUB_OUTPUT
+            
+            echo "📊 SonarQube Project: ${PROJECT_KEY}"
+            echo "🔗 Dashboard URL: ${DASHBOARD_URL}"
+          else
+            echo "⚠️ Could not find SonarQube report-task.txt file"
+          fi
+          
+          # Set exit status
+          if [ $SONAR_EXIT_CODE -ne 0 ]; then
+            echo "sonar_status=failed" >> $GITHUB_OUTPUT
+            echo "❌ SonarQube analysis failed or quality gate did not pass"
+            exit $SONAR_EXIT_CODE
+          else
+            echo "sonar_status=passed" >> $GITHUB_OUTPUT
+            echo "✅ SonarQube analysis passed"
+          fi
         env:
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+      - name: Get Quality Gate Details
+        id: quality-gate
+        if: always() && steps.sonar.outputs.project_key != ''
+        run: |
+          # Get detailed quality gate information
+          PROJECT_KEY="${{ steps.sonar.outputs.project_key }}"
+          
+          # Fetch quality gate status and conditions
+          QG_RESPONSE=$(curl -s -u "${{ secrets.SONAR_TOKEN }}:" \
+            "${{ secrets.SONAR_HOST_URL }}/api/qualitygates/project_status?projectKey=${PROJECT_KEY}")
+          
+          QG_STATUS=$(echo "$QG_RESPONSE" | jq -r '.projectStatus.status')
+          echo "quality_gate_status=${QG_STATUS}" >> $GITHUB_OUTPUT
+          
+          # Get project metrics
+          METRICS_RESPONSE=$(curl -s -u "${{ secrets.SONAR_TOKEN }}:" \
+            "${{ secrets.SONAR_HOST_URL }}/api/measures/component?component=${PROJECT_KEY}&metricKeys=bugs,vulnerabilities,code_smells,coverage,duplicated_lines_density,ncloc")
+          
+          # Extract key metrics
+          BUGS=$(echo "$METRICS_RESPONSE" | jq -r '.component.measures[] | select(.metric=="bugs") | .value // "0"')
+          VULNERABILITIES=$(echo "$METRICS_RESPONSE" | jq -r '.component.measures[] | select(.metric=="vulnerabilities") | .value // "0"')
+          CODE_SMELLS=$(echo "$METRICS_RESPONSE" | jq -r '.component.measures[] | select(.metric=="code_smells") | .value // "0"')
+          COVERAGE=$(echo "$METRICS_RESPONSE" | jq -r '.component.measures[] | select(.metric=="coverage") | .value // "0"')
+          DUPLICATION=$(echo "$METRICS_RESPONSE" | jq -r '.component.measures[] | select(.metric=="duplicated_lines_density") | .value // "0"')
+          LINES_OF_CODE=$(echo "$METRICS_RESPONSE" | jq -r '.component.measures[] | select(.metric=="ncloc") | .value // "0"')
+          
+          echo "bugs=${BUGS}" >> $GITHUB_OUTPUT
+          echo "vulnerabilities=${VULNERABILITIES}" >> $GITHUB_OUTPUT
+          echo "code_smells=${CODE_SMELLS}" >> $GITHUB_OUTPUT
+          echo "coverage=${COVERAGE}" >> $GITHUB_OUTPUT
+          echo "duplication=${DUPLICATION}" >> $GITHUB_OUTPUT
+          echo "lines_of_code=${LINES_OF_CODE}" >> $GITHUB_OUTPUT
+          
+          echo "📊 Quality Gate Status: ${QG_STATUS}"
+          echo "🐛 Bugs: ${BUGS}"
+          echo "🔒 Vulnerabilities: ${VULNERABILITIES}"
+          echo "📝 Code Smells: ${CODE_SMELLS}"
+          echo "🎯 Coverage: ${COVERAGE}%"
+          echo "📋 Lines of Code: ${LINES_OF_CODE}"
+        env:
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+      - name: Create SonarQube Summary
+        if: always() && steps.sonar.outputs.project_key != ''
+        run: |
+          # Create GitHub Actions job summary
+          cat >> $GITHUB_STEP_SUMMARY << 'EOF'
+          ## 📊 SonarQube Analysis Results
+          
+          **Project:** `${{ steps.sonar.outputs.project_key }}`
+          **Status:** ${{ steps.sonar.outputs.sonar_status == 'passed' && '✅ Quality Gate Passed' || '❌ Quality Gate Failed' }}
+          
+          ### 🔗 Links
+          - [📊 SonarQube Dashboard](${{ steps.sonar.outputs.dashboard_url }})
+          - [🎯 Project Overview](${{ secrets.SONAR_HOST_URL }}/dashboard?id=${{ steps.sonar.outputs.project_key }})
+          
+          ### 📈 Metrics
+          | Metric | Value |
+          |--------|-------|
+          | 🐛 Bugs | ${{ steps.quality-gate.outputs.bugs }} |
+          | 🔒 Security Vulnerabilities | ${{ steps.quality-gate.outputs.vulnerabilities }} |
+          | 📝 Code Smells | ${{ steps.quality-gate.outputs.code_smells }} |
+          | 🎯 Test Coverage | ${{ steps.quality-gate.outputs.coverage }}% |
+          | 📋 Lines of Code | ${{ steps.quality-gate.outputs.lines_of_code }} |
+          | 🔄 Duplication | ${{ steps.quality-gate.outputs.duplication }}% |
+          
+          EOF
+          
+          # Add failure details if quality gate failed
+          if [ "${{ steps.sonar.outputs.sonar_status }}" = "failed" ]; then
+            cat >> $GITHUB_STEP_SUMMARY << 'EOF'
+          ### ❌ Quality Gate Failure
+          
+          The SonarQube quality gate failed. Please review the issues in the [SonarQube Dashboard](${{ steps.sonar.outputs.dashboard_url }}) and fix the identified problems before merging.
+          
+          **Next Steps:**
+          1. 🔍 Review the detailed analysis in SonarQube
+          2. 🔧 Fix critical bugs and security vulnerabilities
+          3. 📈 Improve test coverage if below threshold
+          4. 🧹 Address code quality issues
+          
+          EOF
+          fi
+
+      - name: Comment on Pull Request
+        if: always() && steps.sonar.outputs.project_key != '' && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const projectKey = '${{ steps.sonar.outputs.project_key }}';
+            const sonarStatus = '${{ steps.sonar.outputs.sonar_status }}';
+            const dashboardUrl = '${{ steps.sonar.outputs.dashboard_url }}';
+            const bugs = '${{ steps.quality-gate.outputs.bugs }}';
+            const vulnerabilities = '${{ steps.quality-gate.outputs.vulnerabilities }}';
+            const codeSmells = '${{ steps.quality-gate.outputs.code_smells }}';
+            const coverage = '${{ steps.quality-gate.outputs.coverage }}';
+            const duplication = '${{ steps.quality-gate.outputs.duplication }}';
+            const linesOfCode = '${{ steps.quality-gate.outputs.lines_of_code }}';
+            
+            const statusIcon = sonarStatus === 'passed' ? '✅' : '❌';
+            const statusText = sonarStatus === 'passed' ? 'Quality Gate Passed' : 'Quality Gate Failed';
+            
+            const comment = `## 📊 SonarQube Analysis Results
+            
+            **Project:** \`${projectKey}\`
+            **Status:** ${statusIcon} ${statusText}
+            
+            ### 🔗 Links
+            - [📊 SonarQube Dashboard](${dashboardUrl})
+            - [🎯 Project Overview](${{ secrets.SONAR_HOST_URL }}/dashboard?id=${projectKey})
+            
+            ### 📈 Metrics
+            | Metric | Value |
+            |--------|-------|
+            | 🐛 Bugs | ${bugs} |
+            | 🔒 Security Vulnerabilities | ${vulnerabilities} |
+            | 📝 Code Smells | ${codeSmells} |
+            | 🎯 Test Coverage | ${coverage}% |
+            | 📋 Lines of Code | ${linesOfCode} |
+            | 🔄 Duplication | ${duplication}% |
+            
+            ${sonarStatus === 'failed' ? `
+            ### ❌ Action Required
+            
+            The SonarQube quality gate failed. Please review and fix the issues before merging:
+            
+            1. 🔍 [Review detailed analysis](${dashboardUrl})
+            2. 🔧 Fix critical bugs and security vulnerabilities
+            3. 📈 Improve test coverage if below threshold
+            4. 🧹 Address code quality issues
+            ` : ''}
+            `;
+            
+            // Find existing SonarQube comment
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            
+            const existingComment = comments.find(comment => 
+              comment.body.includes('📊 SonarQube Analysis Results')
+            );
+            
+            if (existingComment) {
+              // Update existing comment
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existingComment.id,
+                body: comment
+              });
+            } else {
+              // Create new comment
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: comment
+              });
+            }
