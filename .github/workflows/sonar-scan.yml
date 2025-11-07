@@ -102,11 +102,13 @@ jobs:
         env:
           NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
 
-      - name: Sonar Analysis
+      - name: Sonar Analysis with Quality Gate
         run: |
           mvn sonar:sonar \
             -Dsonar.host.url=${{ env.SONAR_HOST_URL }} \
-            -Dsonar.token=${{ env.SONAR_TOKEN }}
+            -Dsonar.token=${{ env.SONAR_TOKEN }} \
+            -Dsonar.qualitygate.wait=true \
+            -Dsonar.qualitygate.timeout=300
         env:
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
