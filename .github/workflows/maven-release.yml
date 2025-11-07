@@ -1,6 +1,6 @@
 # Simple Maven Release workflow - creates tags on current branch
 # Location: github-workflows repo at .github/workflows/maven-release.yml
-# This workflow just runs maven release commands to create version tags
+# This workflow runs maven release commands to create version tags and deploy artifacts
 # The java-app-build workflow handles testing/building/deployment of the tagged version
 
 name: Maven Release
@@ -131,10 +131,10 @@ jobs:
           MAVEN_REPO_USERNAME: ${{ secrets.MAVEN_REPO_USERNAME }}
           MAVEN_REPO_PASSWORD: ${{ secrets.MAVEN_REPO_PASSWORD }}
 
-      - name: Perform Maven release
+      - name: Perform Maven release:prepare
         if: ${{ !inputs.dry_run }}
         run: |
-          echo "🚀 Performing Maven release..."
+          echo "🚀 Performing Maven release:prepare..."
           
           PROFILES=""
           if [ -n "${{ inputs.maven_profiles }}" ]; then
@@ -172,8 +172,27 @@ jobs:
           # Store the tag name for the summary
           echo "CREATED_TAG=${TAG_NAME}" >> $GITHUB_ENV
           
-          echo "✅ Maven release completed successfully"
+          echo "✅ Maven release:prepare completed successfully"
           echo "✅ Tag ${TAG_NAME} has been created and pushed"
+        env:
+          MAVEN_REPO_USERNAME: ${{ secrets.MAVEN_REPO_USERNAME }}
+          MAVEN_REPO_PASSWORD: ${{ secrets.MAVEN_REPO_PASSWORD }}
+
+      - name: Perform Maven release:perform
+        if: ${{ !inputs.dry_run }}
+        run: |
+          echo "🚀 Performing Maven release:perform..."
+          
+          PROFILES=""
+          if [ -n "${{ inputs.maven_profiles }}" ]; then
+            PROFILES="-P${{ inputs.maven_profiles }}"
+          fi
+          
+          # Execute release:perform to build and deploy the release artifacts
+          mvn release:perform ${PROFILES}
+          
+          echo "✅ Maven release:perform completed successfully"
+          echo "✅ Release artifacts have been built and deployed to repository"
         env:
           MAVEN_REPO_USERNAME: ${{ secrets.MAVEN_REPO_USERNAME }}
           MAVEN_REPO_PASSWORD: ${{ secrets.MAVEN_REPO_PASSWORD }}
