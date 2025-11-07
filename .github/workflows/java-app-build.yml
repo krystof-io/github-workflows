@@ -346,8 +346,6 @@ jobs:
       gitops_repo: ${{ matrix.gitops_repo }}
       cluster_path: ${{ matrix.cluster_path }}
       cluster_name: ${{ matrix.name }}
-      deployment_method: "pull-request"
-      pr_auto_merge: true
       commit_message_suffix: " - Production Release ${{ needs.build.outputs.version }}"
     secrets:
       CICD_TOKEN: ${{ secrets.CICD_TOKEN }}
