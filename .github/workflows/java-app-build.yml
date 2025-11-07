@@ -292,7 +292,6 @@ jobs:
       gitops_repo: ${{ matrix.gitops_repo }}
       cluster_path: ${{ matrix.cluster_path }}
       cluster_name: ${{ matrix.name }}
-      deployment_method: "direct-commit"
     secrets:
       CICD_TOKEN: ${{ secrets.CICD_TOKEN }}
       CICD_USER_EMAIL: ${{ secrets.CICD_USER_EMAIL }}
