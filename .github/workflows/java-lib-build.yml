@@ -6,10 +6,6 @@ name: Java Library Build and Publish
 on:
   workflow_call:
     inputs:
-      lib_name:
-        required: true
-        type: string
-        description: 'Name of the library'
       java_version:
         default: '21'
         type: string
@@ -42,6 +38,9 @@ jobs:
       version: ${{ steps.version.outputs.version }}
       is_snapshot: ${{ steps.version.outputs.is_snapshot }}
       is_release: ${{ steps.version.outputs.is_release }}
+      group_id: ${{ steps.version.outputs.group_id }}
+      artifact_id: ${{ steps.version.outputs.artifact_id }}
+      library_name: ${{ steps.version.outputs.library_name }}
     steps:
       - name: Checkout code
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 #v5
@@ -88,8 +87,13 @@ jobs:
       - name: Calculate version information
         id: version
         run: |
-          # Extract version from pom.xml
+          # Extract Maven coordinates from pom.xml
           VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout || echo "unknown")
+          GROUP_ID=$(mvn help:evaluate -Dexpression=project.groupId -q -DforceStdout || echo "unknown")
+          ARTIFACT_ID=$(mvn help:evaluate -Dexpression=project.artifactId -q -DforceStdout || echo "unknown")
+          
+          # Create a display-friendly library name
+          LIBRARY_NAME="${GROUP_ID}:${ARTIFACT_ID}"
           
           # Determine version type and release status
           if [[ "${VERSION}" == *"SNAPSHOT"* ]]; then
@@ -106,10 +110,14 @@ jobs:
           fi
           
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "group_id=${GROUP_ID}" >> $GITHUB_OUTPUT
+          echo "artifact_id=${ARTIFACT_ID}" >> $GITHUB_OUTPUT
+          echo "library_name=${LIBRARY_NAME}" >> $GITHUB_OUTPUT
           echo "is_snapshot=${IS_SNAPSHOT}" >> $GITHUB_OUTPUT
           echo "is_release=${IS_RELEASE}" >> $GITHUB_OUTPUT
           
-          echo "Library version: ${VERSION}"
+          echo "Library: ${LIBRARY_NAME}"
+          echo "Version: ${VERSION}"
           echo "Is snapshot: ${IS_SNAPSHOT}"
           echo "Is release: ${IS_RELEASE}"
 
@@ -227,6 +235,9 @@ jobs:
       - name: Publish summary
         run: |
           VERSION="${{ needs.build.outputs.version }}"
+          LIBRARY_NAME="${{ needs.build.outputs.library_name }}"
+          GROUP_ID="${{ needs.build.outputs.group_id }}"
+          ARTIFACT_ID="${{ needs.build.outputs.artifact_id }}"
           REPO_TYPE="${{ steps.repo.outputs.repo_type }}"
           
           if [[ "${REPO_TYPE}" == "snapshot" ]]; then
@@ -237,8 +248,10 @@ jobs:
           
           echo "## 📦 Maven Publish Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- **Library**: ${{ inputs.lib_name }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Version**: ${VERSION}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Library**: \`${LIBRARY_NAME}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Group ID**: \`${GROUP_ID}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Artifact ID**: \`${ARTIFACT_ID}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version**: \`${VERSION}\`" >> $GITHUB_STEP_SUMMARY
           echo "- **Repository**: ${REPO_TYPE^^}" >> $GITHUB_STEP_SUMMARY
           echo "- **Target URL**: ${REPO_URL}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
