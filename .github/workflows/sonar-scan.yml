@@ -46,8 +46,6 @@ on:
         required: true
       SONAR_TOKEN:
         required: true
-      SONAR_HOST_URL:
-        required: true
       NVD_API_KEY:
         required: true
       S3_CACHE_ACCESS_KEY:
@@ -158,8 +156,6 @@ jobs:
             TASK_ID=$(grep "ceTaskId=" target/sonar/report-task.txt | cut -d'=' -f2)
             DASHBOARD_URL=$(grep "dashboardUrl=" target/sonar/report-task.txt | cut -d'=' -f2-)
 
-            cat target/sonar/report-task.txt
-            
             echo "project_key=${PROJECT_KEY}" >> $GITHUB_OUTPUT
             echo "task_id=${TASK_ID}" >> $GITHUB_OUTPUT
             echo "dashboard_url=${DASHBOARD_URL}" >> $GITHUB_OUTPUT
@@ -180,7 +176,7 @@ jobs:
             echo "✅ SonarQube analysis passed"
           fi
         env:
-          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+          SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
       - name: Get Quality Gate Details
@@ -192,14 +188,14 @@ jobs:
           
           # Fetch quality gate status and conditions
           QG_RESPONSE=$(curl -s -u "${{ secrets.SONAR_TOKEN }}:" \
-            "${{ secrets.SONAR_HOST_URL }}/api/qualitygates/project_status?projectKey=${PROJECT_KEY}")
+            "${{ vars.SONAR_HOST_URL }}/api/qualitygates/project_status?projectKey=${PROJECT_KEY}")
           
           QG_STATUS=$(echo "$QG_RESPONSE" | jq -r '.projectStatus.status')
           echo "quality_gate_status=${QG_STATUS}" >> $GITHUB_OUTPUT
           
           # Get project metrics
           METRICS_RESPONSE=$(curl -s -u "${{ secrets.SONAR_TOKEN }}:" \
-            "${{ secrets.SONAR_HOST_URL }}/api/measures/component?component=${PROJECT_KEY}&metricKeys=bugs,vulnerabilities,code_smells,coverage,duplicated_lines_density,ncloc")
+            "${{ vars.SONAR_HOST_URL }}/api/measures/component?component=${PROJECT_KEY}&metricKeys=bugs,vulnerabilities,code_smells,coverage,duplicated_lines_density,ncloc")
           
           # Extract key metrics
           BUGS=$(echo "$METRICS_RESPONSE" | jq -r '.component.measures[] | select(.metric=="bugs") | .value // "0"')
@@ -223,7 +219,7 @@ jobs:
           echo "🎯 Coverage: ${COVERAGE}%"
           echo "📋 Lines of Code: ${LINES_OF_CODE}"
         env:
-          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+          SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
       - name: Create SonarQube Summary

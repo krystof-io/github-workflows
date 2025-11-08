@@ -157,7 +157,7 @@ Settings → Secrets and variables → Actions → New organization secret
 | `CICD_USER_NAME` | Git commit author name | `github-actions[bot]` |
 | `CICD_USER_EMAIL` | Git commit author email | `github-actions[bot]@users.noreply.github.com` |
 | `SONAR_TOKEN` | SonarQube authentication token (optional) | `squ_***` |
-| `SONAR_HOST_URL` | SonarQube server URL (optional) | `https://sonar.krystof.io` |
+
 
 **Notes:**
 - The `CICD_TOKEN` must have write access to GitOps repositories and PR creation permissions

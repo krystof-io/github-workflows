@@ -21,8 +21,6 @@ on:
         required: true
       SONAR_TOKEN:
         required: true
-      SONAR_HOST_URL:
-        required: true
       NVD_API_KEY:
         required: true
       S3_CACHE_ACCESS_KEY:
@@ -169,7 +167,6 @@ jobs:
       MAVEN_REPO_USERNAME: ${{ secrets.MAVEN_REPO_USERNAME }}
       MAVEN_REPO_PASSWORD: ${{ secrets.MAVEN_REPO_PASSWORD }}
       SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-      SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
       NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
       S3_CACHE_ACCESS_KEY: ${{ secrets.S3_CACHE_ACCESS_KEY }}
       S3_CACHE_SECRET_KEY: ${{ secrets.S3_CACHE_SECRET_KEY }}
