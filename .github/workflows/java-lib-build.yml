@@ -11,7 +11,7 @@ on:
         type: string
         description: 'Name of the library'
       java_version:
-        default: '17'
+        default: '21'
         type: string
         description: 'Java version to use'
       maven_profiles:
@@ -24,80 +24,59 @@ on:
       MAVEN_REPO_PASSWORD:
         required: true
       SONAR_TOKEN:
-        required: false
+        required: true
       SONAR_HOST_URL:
-        required: false
+        required: true
+      NVD_API_KEY:
+        required: true
+      S3_CACHE_ACCESS_KEY:
+        required: true
+      S3_CACHE_SECRET_KEY:
+        required: true
 
 jobs:
-  # Setup and extract version info
-  setup:
+  # Build and test the library
+  build:
     runs-on: arc-runners-javadev
     outputs:
       version: ${{ steps.version.outputs.version }}
       is_snapshot: ${{ steps.version.outputs.is_snapshot }}
+      is_release: ${{ steps.version.outputs.is_release }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
-      
-      - name: Extract version
-        id: version
-        run: |
-          VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout || echo "unknown")
-          echo "version=${VERSION}" >> $GITHUB_OUTPUT
-          
-          if [[ "${VERSION}" == *"SNAPSHOT"* ]]; then
-            echo "is_snapshot=true" >> $GITHUB_OUTPUT
-          else
-            echo "is_snapshot=false" >> $GITHUB_OUTPUT
-          fi
-          
-          echo "Library version: ${VERSION}"
-
-  # Build and run unit tests
-  build-and-test:
-    runs-on: arc-runners-javadev
-    needs: setup
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-      
-      - name: Set up JDK
-        uses: actions/setup-java@v4
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 #v5
+        
+      - uses: krystof-io/cache@v4.3.0-1.0.0
         with:
-          java-version: ${{ inputs.java_version }}
-          distribution: 'temurin'
-          cache: 'maven'
-      
-      - name: Configure Maven settings
-        run: |
-          mkdir -p ~/.m2
-          cat > ~/.m2/settings.xml << 'EOF'
-          <settings>
-            <servers>
-              <server>
-                <id>maven-releases</id>
-                <username>${env.MAVEN_REPO_USERNAME}</username>
-                <password>${env.MAVEN_REPO_PASSWORD}</password>
-              </server>
-              <server>
-                <id>maven-snapshots</id>
-                <username>${env.MAVEN_REPO_USERNAME}</username>
-                <password>${env.MAVEN_REPO_PASSWORD}</password>
-              </server>
-            </servers>
-            <mirrors>
-              <mirror>
-                <id>maven-public</id>
-                <mirrorOf>*</mirrorOf>
-                <url>${env.MAVEN_REPO_URL}</url>
-              </mirror>
-            </mirrors>
-          </settings>
-          EOF
+          path: ~/.m2/repository
+          key: maven-cache-${{ github.run_id }}-${{ github.run_attempt }}
+        env:
+          RUNS_ON_S3_BUCKET_CACHE: 'runner-caches'
+          AWS_ACCESS_KEY_ID: ${{ secrets.S3_CACHE_ACCESS_KEY }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.S3_CACHE_SECRET_KEY }}
+          RUNS_ON_S3_BUCKET_ENDPOINT: ${{ vars.S3_CACHE_ENDPOINT }}
+          RUNS_ON_AWS_REGION: 'default'
+          RUNS_ON_S3_FORCE_PATH_STYLE: 'true'
+
+      - name: Initialize Maven settings
+        uses: s4u/maven-settings-action@v3.1.0
+        with:
+          servers: |
+            [
+            {"id": "private-snapshots", "username": "${{ env.MAVEN_REPO_USERNAME }}", "password": "${{ env.MAVEN_REPO_PASSWORD }}"},
+            {"id": "private-releases", "username": "${{ env.MAVEN_REPO_USERNAME }}", "password": "${{ env.MAVEN_REPO_PASSWORD }}"},
+            {"id": "nexus", "username": "${{ env.MAVEN_REPO_USERNAME }}", "password": "${{ env.MAVEN_REPO_PASSWORD }}"}
+            ]
+          mirrors: |
+            [
+            {"id": "nexus", "name":"nexus", "mirrorOf":"*", "url":"${{ env.MAVEN_REPO_URL }}"}
+            ]
+          sonatypeSnapshots: true          
         env:
           MAVEN_REPO_USERNAME: ${{ secrets.MAVEN_REPO_USERNAME }}
           MAVEN_REPO_PASSWORD: ${{ secrets.MAVEN_REPO_PASSWORD }}
-      
+          MAVEN_REPO_URL: ${{ vars.MAVEN_REPO_URL }}          
+
       - name: Build and run tests
         run: |
           PROFILES=""
@@ -105,10 +84,35 @@ jobs:
             PROFILES="-P${{ inputs.maven_profiles }}"
           fi
           mvn clean verify ${PROFILES}
-        env:
-          MAVEN_REPO_USERNAME: ${{ secrets.MAVEN_REPO_USERNAME }}
-          MAVEN_REPO_PASSWORD: ${{ secrets.MAVEN_REPO_PASSWORD }}
-      
+
+      - name: Calculate version information
+        id: version
+        run: |
+          # Extract version from pom.xml
+          VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout || echo "unknown")
+          
+          # Determine version type and release status
+          if [[ "${VERSION}" == *"SNAPSHOT"* ]]; then
+            IS_SNAPSHOT="true"
+          else
+            IS_SNAPSHOT="false"
+          fi
+          
+          # Determine if this is a release (tag starting with 'v')
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            IS_RELEASE="true"
+          else
+            IS_RELEASE="false"
+          fi
+          
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "is_snapshot=${IS_SNAPSHOT}" >> $GITHUB_OUTPUT
+          echo "is_release=${IS_RELEASE}" >> $GITHUB_OUTPUT
+          
+          echo "Library version: ${VERSION}"
+          echo "Is snapshot: ${IS_SNAPSHOT}"
+          echo "Is release: ${IS_RELEASE}"
+
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4
@@ -119,117 +123,87 @@ jobs:
             **/target/failsafe-reports/
           retention-days: 7
 
-  # Run Sonar scan (only on main branch)
+  # Run Sonar scan
   sonar-scan:
+    needs: [build]
+    if: ${{ !contains(github.event.head_commit.message, 'prepare for next development iteration') && !contains(github.event.head_commit.message, '[maven-release-plugin]') }}
+    uses: ./.github/workflows/sonar-scan.yml
+    with:
+      java_version: ${{ inputs.java_version }}
+      maven_profiles: ${{ inputs.maven_profiles }}
+    secrets:
+      MAVEN_REPO_USERNAME: ${{ secrets.MAVEN_REPO_USERNAME }}
+      MAVEN_REPO_PASSWORD: ${{ secrets.MAVEN_REPO_PASSWORD }}
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+      NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+      S3_CACHE_ACCESS_KEY: ${{ secrets.S3_CACHE_ACCESS_KEY }}
+      S3_CACHE_SECRET_KEY: ${{ secrets.S3_CACHE_SECRET_KEY }}
+
+  # Validate production release
+  validate-prod-release:
     runs-on: arc-runners-javadev
-    needs: [setup, build-and-test]
-    if: github.ref == 'refs/heads/main' && secrets.SONAR_TOKEN != ''
+    needs: [build, sonar-scan]
+    if: ${{ startsWith(github.ref, 'refs/tags/v') && (needs.sonar-scan.result == 'success' || needs.sonar-scan.result == 'skipped') }}
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0  # Shallow clones disabled for better analysis
-      
-      - name: Set up JDK
-        uses: actions/setup-java@v4
-        with:
-          java-version: ${{ inputs.java_version }}
-          distribution: 'temurin'
-          cache: 'maven'
-      
-      - name: Configure Maven settings
+      - name: Validate version is not SNAPSHOT
         run: |
-          mkdir -p ~/.m2
-          cat > ~/.m2/settings.xml << 'EOF'
-          <settings>
-            <servers>
-              <server>
-                <id>maven-releases</id>
-                <username>${env.MAVEN_REPO_USERNAME}</username>
-                <password>${env.MAVEN_REPO_PASSWORD}</password>
-              </server>
-              <server>
-                <id>maven-snapshots</id>
-                <username>${env.MAVEN_REPO_USERNAME}</username>
-                <password>${env.MAVEN_REPO_PASSWORD}</password>
-              </server>
-            </servers>
-            <mirrors>
-              <mirror>
-                <id>maven-public</id>
-                <mirrorOf>*</mirrorOf>
-                <url>${env.MAVEN_REPO_URL}</url>
-              </mirror>
-            </mirrors>
-          </settings>
-          EOF
-        env:
-          MAVEN_REPO_USERNAME: ${{ secrets.MAVEN_REPO_USERNAME }}
-          MAVEN_REPO_PASSWORD: ${{ secrets.MAVEN_REPO_PASSWORD }}
-      
-      - name: Run Sonar analysis
-        run: |
-          mvn sonar:sonar \
-            -Dsonar.projectKey=${{ inputs.lib_name }} \
-            -Dsonar.host.url=${{ secrets.SONAR_HOST_URL }} \
-            -Dsonar.login=${{ secrets.SONAR_TOKEN }}
-        env:
-          MAVEN_REPO_USERNAME: ${{ secrets.MAVEN_REPO_USERNAME }}
-          MAVEN_REPO_PASSWORD: ${{ secrets.MAVEN_REPO_PASSWORD }}
+          VERSION="${{ needs.build.outputs.version }}"
+          if [[ "${VERSION}" == *"SNAPSHOT"* ]]; then
+            echo "ERROR: Cannot publish SNAPSHOT version as production release"
+            exit 1
+          fi
+          echo "✅ Version ${VERSION} is valid for production release"
 
   # Publish to Maven repository
   publish-to-maven:
     runs-on: arc-runners-javadev
-    needs: [setup, build-and-test]
-    # Publish snapshots on any branch, releases only on tags
+    needs: [build]
+    # Publish snapshots on any branch, releases only on tags after validation
     if: |
-      (needs.setup.outputs.is_snapshot == 'true') ||
-      (needs.setup.outputs.is_snapshot == 'false' && startsWith(github.ref, 'refs/tags/v'))
+      (needs.build.outputs.is_snapshot == 'true') ||
+      (needs.build.outputs.is_snapshot == 'false' && startsWith(github.ref, 'refs/tags/v'))
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
-      
-      - name: Set up JDK
-        uses: actions/setup-java@v4
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 #v5
+        
+      - uses: krystof-io/cache@v4.3.0-1.0.0
         with:
-          java-version: ${{ inputs.java_version }}
-          distribution: 'temurin'
-          cache: 'maven'
-      
-      - name: Configure Maven settings
-        run: |
-          mkdir -p ~/.m2
-          cat > ~/.m2/settings.xml << 'EOF'
-          <settings>
-            <servers>
-              <server>
-                <id>maven-releases</id>
-                <username>${env.MAVEN_REPO_USERNAME}</username>
-                <password>${env.MAVEN_REPO_PASSWORD}</password>
-              </server>
-              <server>
-                <id>maven-snapshots</id>
-                <username>${env.MAVEN_REPO_USERNAME}</username>
-                <password>${env.MAVEN_REPO_PASSWORD}</password>
-              </server>
-            </servers>
-            <mirrors>
-              <mirror>
-                <id>maven-public</id>
-                <mirrorOf>*</mirrorOf>
-                <url>${env.MAVEN_REPO_URL}</url>
-              </mirror>
-            </mirrors>
-          </settings>
-          EOF
+          path: ~/.m2/repository
+          key: maven-cache-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            maven-cache-          
+        env:
+          RUNS_ON_S3_BUCKET_CACHE: 'runner-caches'
+          AWS_ACCESS_KEY_ID: ${{ secrets.S3_CACHE_ACCESS_KEY }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.S3_CACHE_SECRET_KEY }}
+          RUNS_ON_S3_BUCKET_ENDPOINT: ${{ vars.S3_CACHE_ENDPOINT }}
+          RUNS_ON_AWS_REGION: 'default'
+          RUNS_ON_S3_FORCE_PATH_STYLE: 'true'
+
+      - name: Initialize Maven settings
+        uses: s4u/maven-settings-action@v3.1.0
+        with:
+          servers: |
+            [
+            {"id": "private-snapshots", "username": "${{ env.MAVEN_REPO_USERNAME }}", "password": "${{ env.MAVEN_REPO_PASSWORD }}"},
+            {"id": "private-releases", "username": "${{ env.MAVEN_REPO_USERNAME }}", "password": "${{ env.MAVEN_REPO_PASSWORD }}"},
+            {"id": "nexus", "username": "${{ env.MAVEN_REPO_USERNAME }}", "password": "${{ env.MAVEN_REPO_PASSWORD }}"}
+            ]
+          mirrors: |
+            [
+            {"id": "nexus", "name":"nexus", "mirrorOf":"*", "url":"${{ env.MAVEN_REPO_URL }}"}
+            ]
+          sonatypeSnapshots: true          
         env:
           MAVEN_REPO_USERNAME: ${{ secrets.MAVEN_REPO_USERNAME }}
           MAVEN_REPO_PASSWORD: ${{ secrets.MAVEN_REPO_PASSWORD }}
-      
+          MAVEN_REPO_URL: ${{ vars.MAVEN_REPO_URL }}   
+
       - name: Determine target repository
         id: repo
         run: |
-          if [[ "${{ needs.setup.outputs.is_snapshot }}" == "true" ]]; then
+          if [[ "${{ needs.build.outputs.is_snapshot }}" == "true" ]]; then
             echo "Target: SNAPSHOT repository"
             echo "repo_type=snapshot" >> $GITHUB_OUTPUT
           else
@@ -243,27 +217,29 @@ jobs:
           if [ -n "${{ inputs.maven_profiles }}" ]; then
             PROFILES="-P${{ inputs.maven_profiles }}"
           fi
-          mvn deploy -DskipTests ${PROFILES}
+          mvn deploy -DskipTests ${PROFILES} \
+            -DaltSnapshotDeploymentRepository=private-snapshots::${{ vars.MAVEN_PRIVATE_SNAPSHOT_REPO_URL }} \
+            -DaltReleaseDeploymentRepository=private-releases::${{ vars.MAVEN_PRIVATE_RELEASE_REPO_URL }}
         env:
           MAVEN_REPO_USERNAME: ${{ secrets.MAVEN_REPO_USERNAME }}
           MAVEN_REPO_PASSWORD: ${{ secrets.MAVEN_REPO_PASSWORD }}
       
       - name: Publish summary
         run: |
-          VERSION="${{ needs.setup.outputs.version }}"
-          if [[ "${{ steps.repo.outputs.repo_type }}" == "snapshot" ]]; then
-            REPO_URL="${{ env.MAVEN_PRIVATE_SNAPSHOT_REPO_URL }}"
-            REPO_TYPE="SNAPSHOT"
+          VERSION="${{ needs.build.outputs.version }}"
+          REPO_TYPE="${{ steps.repo.outputs.repo_type }}"
+          
+          if [[ "${REPO_TYPE}" == "snapshot" ]]; then
+            REPO_URL="${{ vars.MAVEN_PRIVATE_SNAPSHOT_REPO_URL }}"
           else
-            REPO_URL="${{ env.MAVEN_PRIVATE_RELEASE_REPO_URL }}"
-            REPO_TYPE="RELEASE"
+            REPO_URL="${{ vars.MAVEN_PRIVATE_RELEASE_REPO_URL }}"
           fi
           
           echo "## 📦 Maven Publish Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "- **Library**: ${{ inputs.lib_name }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Version**: ${VERSION}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Repository**: ${REPO_TYPE}" >> $GITHUB_STEP_SUMMARY
-          echo "- **URL**: ${REPO_URL}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Repository**: ${REPO_TYPE^^}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Target URL**: ${REPO_URL}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "✅ Successfully published to Maven repository" >> $GITHUB_STEP_SUMMARY
