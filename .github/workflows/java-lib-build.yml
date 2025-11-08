@@ -121,6 +121,42 @@ jobs:
           echo "Is snapshot: ${IS_SNAPSHOT}"
           echo "Is release: ${IS_RELEASE}"
 
+      - name: Build Summary
+        run: |
+          LIBRARY_NAME="${{ steps.version.outputs.library_name }}"
+          VERSION="${{ steps.version.outputs.version }}"
+          GROUP_ID="${{ steps.version.outputs.group_id }}"
+          ARTIFACT_ID="${{ steps.version.outputs.artifact_id }}"
+          IS_SNAPSHOT="${{ steps.version.outputs.is_snapshot }}"
+          IS_RELEASE="${{ steps.version.outputs.is_release }}"
+          JAVA_VERSION="${{ inputs.java_version }}"
+          MAVEN_PROFILES="${{ inputs.maven_profiles }}"
+          
+          echo "## 📚 Java Library Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Library**: \`${LIBRARY_NAME}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Group ID**: \`${GROUP_ID}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Artifact ID**: \`${ARTIFACT_ID}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version**: \`${VERSION}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Java Version**: \`${JAVA_VERSION}\`" >> $GITHUB_STEP_SUMMARY
+          if [ -n "${MAVEN_PROFILES}" ]; then
+            echo "- **Maven Profiles**: \`${MAVEN_PROFILES}\`" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "- **Snapshot Version**: ${IS_SNAPSHOT}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Release Build**: ${IS_RELEASE}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [[ "${IS_RELEASE}" == "true" && "${IS_SNAPSHOT}" == "false" ]]; then
+            echo "🎯 **Production Release Build** - Will publish to release repository" >> $GITHUB_STEP_SUMMARY
+          elif [[ "${IS_SNAPSHOT}" == "true" ]]; then
+            echo "🔧 **Snapshot Build** - Will publish to snapshot repository" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "🌿 **Development Build** - Build and test only" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "✅ Build and tests completed successfully" >> $GITHUB_STEP_SUMMARY
+
   # Run Sonar scan
   sonar-scan:
     needs: [build]
@@ -312,3 +348,107 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "✅ SonarQube quality gate passed" >> $GITHUB_STEP_SUMMARY
           echo "✅ Successfully published to Maven RELEASE repository" >> $GITHUB_STEP_SUMMARY
+
+  # Workflow Summary
+  workflow-summary:
+    runs-on: arc-runners-javadev
+    if: always()
+    needs: [build, sonar-scan, validate-prod-release, publish-snapshot, publish-release]
+    steps:
+      - name: Generate Workflow Summary
+        run: |
+          LIBRARY_NAME="${{ needs.build.outputs.library_name }}"
+          VERSION="${{ needs.build.outputs.version }}"
+          GROUP_ID="${{ needs.build.outputs.group_id }}"
+          ARTIFACT_ID="${{ needs.build.outputs.artifact_id }}"
+          IS_SNAPSHOT="${{ needs.build.outputs.is_snapshot }}"
+          IS_RELEASE="${{ needs.build.outputs.is_release }}"
+          
+          echo "# 📋 Library Workflow Execution Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Library Information" >> $GITHUB_STEP_SUMMARY
+          echo "- **Library**: \`${LIBRARY_NAME}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Group ID**: \`${GROUP_ID}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Artifact ID**: \`${ARTIFACT_ID}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version**: \`${VERSION}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Snapshot**: ${IS_SNAPSHOT}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Release**: ${IS_RELEASE}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          echo "## Job Status Summary" >> $GITHUB_STEP_SUMMARY
+          echo "| Job | Status | Notes |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          
+          # Build status
+          if [[ "${{ needs.build.result }}" == "success" ]]; then
+            echo "| 🏗️ Build & Test | ✅ Success | Library built and tested successfully |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| 🏗️ Build & Test | ❌ Failed | Build or tests failed |" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # SonarQube status
+          if [[ "${{ needs.sonar-scan.result }}" == "success" ]]; then
+            echo "| 🔍 SonarQube Scan | ✅ Success | Quality gate passed |" >> $GITHUB_STEP_SUMMARY
+          elif [[ "${{ needs.sonar-scan.result }}" == "skipped" ]]; then
+            echo "| 🔍 SonarQube Scan | ⏭️ Skipped | Commit message contains 'prepare for next development iteration' |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| 🔍 SonarQube Scan | ❌ Failed | Quality gate failed |" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # Publication status
+          if [[ "${IS_SNAPSHOT}" == "true" ]]; then
+            if [[ "${{ needs.publish-snapshot.result }}" == "success" ]]; then
+              echo "| 📦 Publish SNAPSHOT | ✅ Success | Published to snapshot repository |" >> $GITHUB_STEP_SUMMARY
+            elif [[ "${{ needs.publish-snapshot.result }}" == "failure" ]]; then
+              echo "| 📦 Publish SNAPSHOT | ❌ Failed | Snapshot publication failed |" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "| 📦 Publish SNAPSHOT | ⏭️ Skipped | Not a snapshot version |" >> $GITHUB_STEP_SUMMARY
+            fi
+          fi
+          
+          if [[ "${IS_RELEASE}" == "true" && "${IS_SNAPSHOT}" == "false" ]]; then
+            if [[ "${{ needs.validate-prod-release.result }}" == "success" ]]; then
+              echo "| 🏭 Release Validation | ✅ Success | Release validation passed |" >> $GITHUB_STEP_SUMMARY
+            elif [[ "${{ needs.validate-prod-release.result }}" == "failure" ]]; then
+              echo "| 🏭 Release Validation | ❌ Failed | Release validation failed |" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "| 🏭 Release Validation | ⏭️ Skipped | Not a release build |" >> $GITHUB_STEP_SUMMARY
+            fi
+            
+            if [[ "${{ needs.publish-release.result }}" == "success" ]]; then
+              echo "| 📦 Publish RELEASE | ✅ Success | Published to release repository |" >> $GITHUB_STEP_SUMMARY
+            elif [[ "${{ needs.publish-release.result }}" == "failure" ]]; then
+              echo "| 📦 Publish RELEASE | ❌ Failed | Release publication failed |" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "| 📦 Publish RELEASE | ⏭️ Skipped | Not a release build |" >> $GITHUB_STEP_SUMMARY
+            fi
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Overall status
+          if [[ "${{ needs.build.result }}" == "success" ]]; then
+            if [[ "${IS_SNAPSHOT}" == "true" ]]; then
+              if [[ "${{ needs.publish-snapshot.result }}" == "success" ]]; then
+                echo "## 🎉 Overall Status: SUCCESS" >> $GITHUB_STEP_SUMMARY
+                echo "Snapshot library published successfully!" >> $GITHUB_STEP_SUMMARY
+              else
+                echo "## ❌ Overall Status: FAILED" >> $GITHUB_STEP_SUMMARY
+                echo "Snapshot publication failed - check job details above." >> $GITHUB_STEP_SUMMARY
+              fi
+            elif [[ "${IS_RELEASE}" == "true" && "${IS_SNAPSHOT}" == "false" ]]; then
+              if [[ "${{ needs.validate-prod-release.result }}" == "success" && "${{ needs.publish-release.result }}" == "success" ]]; then
+                echo "## 🎉 Overall Status: SUCCESS" >> $GITHUB_STEP_SUMMARY
+                echo "Release library published successfully!" >> $GITHUB_STEP_SUMMARY
+              else
+                echo "## ❌ Overall Status: FAILED" >> $GITHUB_STEP_SUMMARY
+                echo "Release validation or publication failed - check job details above." >> $GITHUB_STEP_SUMMARY
+              fi
+            else
+              echo "## 🎉 Overall Status: SUCCESS" >> $GITHUB_STEP_SUMMARY
+              echo "Library built and tested successfully!" >> $GITHUB_STEP_SUMMARY
+            fi
+          else
+            echo "## ❌ Overall Status: FAILED" >> $GITHUB_STEP_SUMMARY
+            echo "Build or tests failed - check job details above." >> $GITHUB_STEP_SUMMARY
+          fi

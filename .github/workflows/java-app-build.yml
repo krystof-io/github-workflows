@@ -176,6 +176,40 @@ jobs:
           echo "Image Tag: ${IMAGE_TAG}"
           echo "Is Release: ${IS_RELEASE}"
 
+      - name: Build Summary
+        run: |
+          APP_NAME="${{ inputs.app_name }}"
+          VERSION="${{ steps.version.outputs.version }}"
+          IMAGE_TAG="${{ steps.version.outputs.image_tag }}"
+          IS_RELEASE="${{ steps.version.outputs.is_release }}"
+          HAS_CLUSTERS="${{ steps.parse.outputs.has_clusters }}"
+          JAVA_VERSION="${{ inputs.java_version }}"
+          MAVEN_PROFILES="${{ inputs.maven_profiles }}"
+          
+          echo "## 🚀 Java Application Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Application**: \`${APP_NAME}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version**: \`${VERSION}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Image Tag**: \`${IMAGE_TAG}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Java Version**: \`${JAVA_VERSION}\`" >> $GITHUB_STEP_SUMMARY
+          if [ -n "${MAVEN_PROFILES}" ]; then
+            echo "- **Maven Profiles**: \`${MAVEN_PROFILES}\`" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "- **Release Build**: ${IS_RELEASE}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Has Target Clusters**: ${HAS_CLUSTERS}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [[ "${IS_RELEASE}" == "true" ]]; then
+            echo "🎯 **Production Release Build** - Will deploy to production environment" >> $GITHUB_STEP_SUMMARY
+          elif [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            echo "🔧 **Main Branch Build** - Will deploy to development environment" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "🌿 **Feature Branch Build** - Development build only" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "✅ Build and tests completed successfully" >> $GITHUB_STEP_SUMMARY
+
   # Build Docker image
   build-docker-image:
     runs-on: arc-runners-javadev
@@ -261,6 +295,26 @@ jobs:
           
           docker push "${IMAGE_NAME}"
 
+      - name: Docker Build Summary
+        run: |
+          APP_NAME="${{ inputs.app_name }}"
+          IMAGE_TAG="${{ needs.build.outputs.image_tag }}"
+          BASE_IMAGE="${{ inputs.base_docker_image }}"
+          JAR_FILE="${{ steps.find_jar.outputs.jar_file }}"
+          IMAGE_NAME="${{ vars.IMAGE_REGISTRY_HOST }}/krystof-io/${{ inputs.app_name }}:${{ needs.build.outputs.image_tag }}"
+          DOCKERFILE_PATH="${{ inputs.dockerfile_path }}"
+          
+          echo "## 🐳 Docker Image Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Application**: \`${APP_NAME}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Image Name**: \`${IMAGE_NAME}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Base Image**: \`${BASE_IMAGE}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **JAR File**: \`${JAR_FILE}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Dockerfile**: \`${DOCKERFILE_PATH}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Registry**: \`${{ vars.IMAGE_REGISTRY_HOST }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "✅ Docker image built and pushed successfully" >> $GITHUB_STEP_SUMMARY
+
   # Run Sonar scan
   sonar-scan:
     needs: [build]
@@ -333,6 +387,24 @@ jobs:
           fi
           echo "✅ Version ${VERSION} is valid for production"
 
+      - name: Production Release Validation Summary
+        run: |
+          APP_NAME="${{ inputs.app_name }}"
+          VERSION="${{ needs.build.outputs.version }}"
+          IMAGE_TAG="${{ needs.build.outputs.image_tag }}"
+          
+          echo "## 🏭 Production Release Validation Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Application**: \`${APP_NAME}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version**: \`${VERSION}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Image Tag**: \`${IMAGE_TAG}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Build Status**: ✅ Passed" >> $GITHUB_STEP_SUMMARY
+          echo "- **Docker Image**: ✅ Built and Pushed" >> $GITHUB_STEP_SUMMARY
+          echo "- **SonarQube**: ${{ needs.sonar-scan.result == 'success' && '✅ Passed' || (needs.sonar-scan.result == 'skipped' && '⏭️ Skipped' || '❌ Failed') }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version Validation**: ✅ Non-SNAPSHOT version confirmed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "🚀 **Ready for Production Deployment**" >> $GITHUB_STEP_SUMMARY
+
   # Deploy to prod environment (create PR with auto-merge)
   deploy-prod:
     needs: [build, validate-prod-release]
@@ -370,4 +442,121 @@ jobs:
     secrets:
       CLUSTER_CA_CERTIFICATE: ${{ secrets[format('K8S_CLUSTER_CA_CERT_FOR_{0}_CLUSTER', matrix.name)] }}
       SERVICE_ACCOUNT_TOKEN: ${{ secrets[format('SERVICE_ACCOUNT_TOKEN_FOR_{0}_CLUSTER_CICD_K8S_ACCESS', matrix.name)] }}
+
+  # Workflow Summary
+  workflow-summary:
+    runs-on: arc-runners-javadev
+    if: always()
+    needs: [build, build-docker-image, sonar-scan, deploy-dev, validate-dev-deployment, validate-prod-release, deploy-prod, validate-prod-deployment]
+    steps:
+      - name: Generate Workflow Summary
+        run: |
+          APP_NAME="${{ inputs.app_name }}"
+          VERSION="${{ needs.build.outputs.version }}"
+          IMAGE_TAG="${{ needs.build.outputs.image_tag }}"
+          IS_RELEASE="${{ needs.build.outputs.is_release }}"
+          HAS_CLUSTERS="${{ needs.build.outputs.has_clusters }}"
+          
+          echo "# 📋 Workflow Execution Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Application Information" >> $GITHUB_STEP_SUMMARY
+          echo "- **Name**: \`${APP_NAME}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version**: \`${VERSION}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Image Tag**: \`${IMAGE_TAG}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Release Build**: ${IS_RELEASE}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          echo "## Job Status Summary" >> $GITHUB_STEP_SUMMARY
+          echo "| Job | Status | Notes |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          
+          # Build status
+          if [[ "${{ needs.build.result }}" == "success" ]]; then
+            echo "| 🏗️ Build & Test | ✅ Success | Application built and tested successfully |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| 🏗️ Build & Test | ❌ Failed | Build or tests failed |" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # Docker build status
+          if [[ "${{ needs.build-docker-image.result }}" == "success" ]]; then
+            echo "| 🐳 Docker Build | ✅ Success | Container image built and pushed |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| 🐳 Docker Build | ❌ Failed | Docker build failed |" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # SonarQube status
+          if [[ "${{ needs.sonar-scan.result }}" == "success" ]]; then
+            echo "| 🔍 SonarQube Scan | ✅ Success | Quality gate passed |" >> $GITHUB_STEP_SUMMARY
+          elif [[ "${{ needs.sonar-scan.result }}" == "skipped" ]]; then
+            echo "| 🔍 SonarQube Scan | ⏭️ Skipped | Commit message contains 'prepare for next development iteration' |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| 🔍 SonarQube Scan | ❌ Failed | Quality gate failed |" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # Development deployment
+          if [[ "${HAS_CLUSTERS}" == "true" && "${IS_RELEASE}" == "false" ]]; then
+            if [[ "${{ needs.deploy-dev.result }}" == "success" ]]; then
+              echo "| 🚀 Dev Deployment | ✅ Success | Deployed to development environment |" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "| 🚀 Dev Deployment | ❌ Failed | Development deployment failed |" >> $GITHUB_STEP_SUMMARY
+            fi
+            
+            if [[ "${{ needs.validate-dev-deployment.result }}" == "success" ]]; then
+              echo "| ✅ Dev Validation | ✅ Success | Development deployment validated |" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "| ✅ Dev Validation | ❌ Failed | Development validation failed |" >> $GITHUB_STEP_SUMMARY
+            fi
+          fi
+          
+          # Production deployment (only for releases)
+          if [[ "${IS_RELEASE}" == "true" ]]; then
+            if [[ "${{ needs.validate-prod-release.result }}" == "success" ]]; then
+              echo "| 🏭 Prod Validation | ✅ Success | Release validation passed |" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "| 🏭 Prod Validation | ❌ Failed | Release validation failed |" >> $GITHUB_STEP_SUMMARY
+            fi
+            
+            if [[ "${{ needs.deploy-prod.result }}" == "success" ]]; then
+              echo "| 🚀 Prod Deployment | ✅ Success | Deployed to production environment |" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "| 🚀 Prod Deployment | ❌ Failed | Production deployment failed |" >> $GITHUB_STEP_SUMMARY
+            fi
+            
+            if [[ "${{ needs.validate-prod-deployment.result }}" == "success" ]]; then
+              echo "| ✅ Prod Validation | ✅ Success | Production deployment validated |" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "| ✅ Prod Validation | ❌ Failed | Production validation failed |" >> $GITHUB_STEP_SUMMARY
+            fi
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Overall status
+          if [[ "${{ needs.build.result }}" == "success" && "${{ needs.build-docker-image.result }}" == "success" ]]; then
+            if [[ "${IS_RELEASE}" == "true" ]]; then
+              if [[ "${{ needs.validate-prod-release.result }}" == "success" && "${{ needs.deploy-prod.result }}" == "success" && "${{ needs.validate-prod-deployment.result }}" == "success" ]]; then
+                echo "## 🎉 Overall Status: SUCCESS" >> $GITHUB_STEP_SUMMARY
+                echo "Production release completed successfully!" >> $GITHUB_STEP_SUMMARY
+              else
+                echo "## ❌ Overall Status: FAILED" >> $GITHUB_STEP_SUMMARY
+                echo "Production release failed - check job details above." >> $GITHUB_STEP_SUMMARY
+              fi
+            else
+              if [[ "${HAS_CLUSTERS}" == "true" ]]; then
+                if [[ "${{ needs.deploy-dev.result }}" == "success" && "${{ needs.validate-dev-deployment.result }}" == "success" ]]; then
+                  echo "## 🎉 Overall Status: SUCCESS" >> $GITHUB_STEP_SUMMARY
+                  echo "Development deployment completed successfully!" >> $GITHUB_STEP_SUMMARY
+                else
+                  echo "## ❌ Overall Status: FAILED" >> $GITHUB_STEP_SUMMARY
+                  echo "Development deployment failed - check job details above." >> $GITHUB_STEP_SUMMARY
+                fi
+              else
+                echo "## 🎉 Overall Status: SUCCESS" >> $GITHUB_STEP_SUMMARY
+                echo "Build and Docker image creation completed successfully!" >> $GITHUB_STEP_SUMMARY
+              fi
+            fi
+          else
+            echo "## ❌ Overall Status: FAILED" >> $GITHUB_STEP_SUMMARY
+            echo "Build or Docker image creation failed - check job details above." >> $GITHUB_STEP_SUMMARY
+          fi
       

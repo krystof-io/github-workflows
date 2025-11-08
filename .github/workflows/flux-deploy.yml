@@ -189,3 +189,59 @@ jobs:
             echo "💥 Pull request deployment failed"
             exit 1
           fi
+
+      - name: Deployment Summary
+        if: always()
+        run: |
+          APP_NAME="${{ inputs.app_name }}"
+          IMAGE_TAG="${{ inputs.image_tag }}"
+          NAMESPACE="${{ inputs.target_namespace }}"
+          CLUSTER_NAME="${{ inputs.cluster_name }}"
+          GITOPS_REPO="${{ inputs.gitops_repo }}"
+          CLUSTER_PATH="${{ inputs.cluster_path }}"
+          
+          # Determine environment type from namespace
+          if [[ "${NAMESPACE}" == *"prod"* ]]; then
+            ENV_TYPE="🏭 Production"
+            ENV_ICON="🏭"
+          elif [[ "${NAMESPACE}" == *"dev"* ]]; then
+            ENV_TYPE="🔧 Development"
+            ENV_ICON="🔧"
+          else
+            ENV_TYPE="📦 ${NAMESPACE}"
+            ENV_ICON="📦"
+          fi
+          
+          echo "## 🚀 GitOps Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Application Information" >> $GITHUB_STEP_SUMMARY
+          echo "- **Application**: \`${APP_NAME}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Image Tag**: \`${IMAGE_TAG}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Environment**: ${ENV_TYPE}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Namespace**: \`${NAMESPACE}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Cluster**: \`${CLUSTER_NAME}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### GitOps Information" >> $GITHUB_STEP_SUMMARY
+          echo "- **Repository**: [\`${GITOPS_REPO}\`](https://github.com/${GITOPS_REPO})" >> $GITHUB_STEP_SUMMARY
+          echo "- **Cluster Path**: \`${CLUSTER_PATH}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Deployment Path**: \`${CLUSTER_PATH}/${NAMESPACE}/${APP_NAME}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Check if deployment was successful based on step outcomes
+          if [[ "${{ job.status }}" == "success" ]]; then
+            echo "### ✅ Deployment Status: SUCCESS" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "🎉 **Deployment completed successfully!**" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**What happened:**" >> $GITHUB_STEP_SUMMARY
+            echo "- Pull request created and automatically merged" >> $GITHUB_STEP_SUMMARY
+            echo "- Image tag updated in Helm values file" >> $GITHUB_STEP_SUMMARY
+            echo "- Application added to kustomization (if needed)" >> $GITHUB_STEP_SUMMARY
+            echo "- Flux will detect changes and deploy automatically" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### ❌ Deployment Status: FAILED" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "💥 **Deployment failed!**" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Please check the job logs for detailed error information." >> $GITHUB_STEP_SUMMARY
+          fi
