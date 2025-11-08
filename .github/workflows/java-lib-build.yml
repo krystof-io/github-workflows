@@ -148,14 +148,36 @@ jobs:
       S3_CACHE_ACCESS_KEY: ${{ secrets.S3_CACHE_ACCESS_KEY }}
       S3_CACHE_SECRET_KEY: ${{ secrets.S3_CACHE_SECRET_KEY }}
 
-  # Publish to Maven repository
-  publish-to-maven:
+  # Validate production release (only for releases)
+  validate-prod-release:
+    runs-on: arc-runners-javadev
+    needs: [build, sonar-scan]
+    if: ${{ needs.build.outputs.is_snapshot == 'false' && startsWith(github.ref, 'refs/tags/v') && (needs.sonar-scan.result == 'success' || needs.sonar-scan.result == 'skipped') }}
+    steps:
+      - name: Validate version is not SNAPSHOT
+        run: |
+          VERSION="${{ needs.build.outputs.version }}"
+          if [[ "${VERSION}" == *"SNAPSHOT"* ]]; then
+            echo "ERROR: Cannot publish SNAPSHOT version as production release"
+            exit 1
+          fi
+          echo "✅ Version ${VERSION} is valid for production release"
+      
+      - name: Validate SonarQube passed for release
+        run: |
+          SONAR_RESULT="${{ needs.sonar-scan.result }}"
+          if [[ "${SONAR_RESULT}" != "success" && "${SONAR_RESULT}" != "skipped" ]]; then
+            echo "ERROR: SonarQube analysis must pass for production releases"
+            echo "SonarQube result: ${SONAR_RESULT}"
+            exit 1
+          fi
+          echo "✅ SonarQube validation passed for production release"
+
+  # Publish snapshots to Maven repository (no SonarQube requirement)
+  publish-snapshot:
     runs-on: arc-runners-javadev
     needs: [build]
-    # Publish snapshots on any branch, releases only on tags after validation
-    if: |
-      (needs.build.outputs.is_snapshot == 'true') ||
-      (needs.build.outputs.is_snapshot == 'false' && startsWith(github.ref, 'refs/tags/v'))
+    if: ${{ needs.build.outputs.is_snapshot == 'true' }}
     steps:
       - name: Checkout code
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 #v5
@@ -193,18 +215,7 @@ jobs:
           MAVEN_REPO_PASSWORD: ${{ secrets.MAVEN_REPO_PASSWORD }}
           MAVEN_REPO_URL: ${{ vars.MAVEN_REPO_URL }}   
 
-      - name: Determine target repository
-        id: repo
-        run: |
-          if [[ "${{ needs.build.outputs.is_snapshot }}" == "true" ]]; then
-            echo "Target: SNAPSHOT repository"
-            echo "repo_type=snapshot" >> $GITHUB_OUTPUT
-          else
-            echo "Target: RELEASE repository"
-            echo "repo_type=release" >> $GITHUB_OUTPUT
-          fi
-      
-      - name: Deploy to Maven repository
+      - name: Deploy SNAPSHOT to Maven repository
         run: |
           PROFILES=""
           if [ -n "${{ inputs.maven_profiles }}" ]; then
@@ -217,27 +228,97 @@ jobs:
           MAVEN_REPO_USERNAME: ${{ secrets.MAVEN_REPO_USERNAME }}
           MAVEN_REPO_PASSWORD: ${{ secrets.MAVEN_REPO_PASSWORD }}
       
-      - name: Publish summary
+      - name: Publish SNAPSHOT summary
         run: |
           VERSION="${{ needs.build.outputs.version }}"
           LIBRARY_NAME="${{ needs.build.outputs.library_name }}"
           GROUP_ID="${{ needs.build.outputs.group_id }}"
           ARTIFACT_ID="${{ needs.build.outputs.artifact_id }}"
-          REPO_TYPE="${{ steps.repo.outputs.repo_type }}"
+          REPO_URL="${{ vars.MAVEN_PRIVATE_SNAPSHOT_REPO_URL }}"
           
-          if [[ "${REPO_TYPE}" == "snapshot" ]]; then
-            REPO_URL="${{ vars.MAVEN_PRIVATE_SNAPSHOT_REPO_URL }}"
-          else
-            REPO_URL="${{ vars.MAVEN_PRIVATE_RELEASE_REPO_URL }}"
-          fi
-          
-          echo "## 📦 Maven Publish Summary" >> $GITHUB_STEP_SUMMARY
+          echo "## 📦 Maven SNAPSHOT Publish Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "- **Library**: \`${LIBRARY_NAME}\`" >> $GITHUB_STEP_SUMMARY
           echo "- **Group ID**: \`${GROUP_ID}\`" >> $GITHUB_STEP_SUMMARY
           echo "- **Artifact ID**: \`${ARTIFACT_ID}\`" >> $GITHUB_STEP_SUMMARY
           echo "- **Version**: \`${VERSION}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Repository**: ${REPO_TYPE^^}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Repository**: SNAPSHOT" >> $GITHUB_STEP_SUMMARY
           echo "- **Target URL**: ${REPO_URL}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "✅ Successfully published to Maven repository" >> $GITHUB_STEP_SUMMARY
+          echo "ℹ️ SNAPSHOT published without SonarQube validation requirement" >> $GITHUB_STEP_SUMMARY
+          echo "✅ Successfully published to Maven SNAPSHOT repository" >> $GITHUB_STEP_SUMMARY
+
+  # Publish releases to Maven repository (requires SonarQube to pass)
+  publish-release:
+    runs-on: arc-runners-javadev
+    needs: [build, validate-prod-release]
+    if: ${{ needs.build.outputs.is_snapshot == 'false' && startsWith(github.ref, 'refs/tags/v') }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 #v5
+        
+      - uses: krystof-io/cache@v4.3.0-1.0.0
+        with:
+          path: ~/.m2/repository
+          key: maven-cache-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            maven-cache-          
+        env:
+          RUNS_ON_S3_BUCKET_CACHE: 'runner-caches'
+          AWS_ACCESS_KEY_ID: ${{ secrets.S3_CACHE_ACCESS_KEY }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.S3_CACHE_SECRET_KEY }}
+          RUNS_ON_S3_BUCKET_ENDPOINT: ${{ vars.S3_CACHE_ENDPOINT }}
+          RUNS_ON_AWS_REGION: 'default'
+          RUNS_ON_S3_FORCE_PATH_STYLE: 'true'
+
+      - name: Initialize Maven settings
+        uses: s4u/maven-settings-action@v3.1.0
+        with:
+          servers: |
+            [
+            {"id": "private-snapshots", "username": "${{ env.MAVEN_REPO_USERNAME }}", "password": "${{ env.MAVEN_REPO_PASSWORD }}"},
+            {"id": "private-releases", "username": "${{ env.MAVEN_REPO_USERNAME }}", "password": "${{ env.MAVEN_REPO_PASSWORD }}"},
+            {"id": "nexus", "username": "${{ env.MAVEN_REPO_USERNAME }}", "password": "${{ env.MAVEN_REPO_PASSWORD }}"}
+            ]
+          mirrors: |
+            [
+            {"id": "nexus", "name":"nexus", "mirrorOf":"*", "url":"${{ env.MAVEN_REPO_URL }}"}
+            ]
+          sonatypeSnapshots: true          
+        env:
+          MAVEN_REPO_USERNAME: ${{ secrets.MAVEN_REPO_USERNAME }}
+          MAVEN_REPO_PASSWORD: ${{ secrets.MAVEN_REPO_PASSWORD }}
+          MAVEN_REPO_URL: ${{ vars.MAVEN_REPO_URL }}   
+
+      - name: Deploy RELEASE to Maven repository
+        run: |
+          PROFILES=""
+          if [ -n "${{ inputs.maven_profiles }}" ]; then
+            PROFILES="-P${{ inputs.maven_profiles }}"
+          fi
+          mvn deploy -DskipTests ${PROFILES} \
+            -DaltSnapshotDeploymentRepository=private-snapshots::${{ vars.MAVEN_PRIVATE_SNAPSHOT_REPO_URL }} \
+            -DaltReleaseDeploymentRepository=private-releases::${{ vars.MAVEN_PRIVATE_RELEASE_REPO_URL }}
+        env:
+          MAVEN_REPO_USERNAME: ${{ secrets.MAVEN_REPO_USERNAME }}
+          MAVEN_REPO_PASSWORD: ${{ secrets.MAVEN_REPO_PASSWORD }}
+      
+      - name: Publish RELEASE summary
+        run: |
+          VERSION="${{ needs.build.outputs.version }}"
+          LIBRARY_NAME="${{ needs.build.outputs.library_name }}"
+          GROUP_ID="${{ needs.build.outputs.group_id }}"
+          ARTIFACT_ID="${{ needs.build.outputs.artifact_id }}"
+          REPO_URL="${{ vars.MAVEN_PRIVATE_RELEASE_REPO_URL }}"
+          
+          echo "## 📦 Maven RELEASE Publish Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Library**: \`${LIBRARY_NAME}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Group ID**: \`${GROUP_ID}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Artifact ID**: \`${ARTIFACT_ID}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version**: \`${VERSION}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Repository**: RELEASE" >> $GITHUB_STEP_SUMMARY
+          echo "- **Target URL**: ${REPO_URL}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "✅ SonarQube quality gate passed" >> $GITHUB_STEP_SUMMARY
+          echo "✅ Successfully published to Maven RELEASE repository" >> $GITHUB_STEP_SUMMARY
