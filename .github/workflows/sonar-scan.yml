@@ -227,16 +227,19 @@ jobs:
       - name: Create SonarQube Summary
         if: always() && steps.sonar.outputs.project_key != ''
         run: |
+          PROJECT_KEY="${{ steps.sonar.outputs.project_key }}"
+          DASHBOARD_URL="${{ steps.sonar.outputs.dashboard_url }}"
+          
           # Create GitHub Actions job summary
-          cat >> $GITHUB_STEP_SUMMARY << 'EOF'
+          cat >> $GITHUB_STEP_SUMMARY << EOF
           ## 📊 SonarQube Analysis Results
           
-          **Project:** `${{ steps.sonar.outputs.project_key }}`
+          **Project:** \`${PROJECT_KEY}\`
           **Status:** ${{ steps.sonar.outputs.sonar_status == 'passed' && '✅ Quality Gate Passed' || '❌ Quality Gate Failed' }}
           
           ### 🔗 Links
-          - [📊 SonarQube Dashboard](${{ steps.sonar.outputs.dashboard_url }})
-          - [🎯 Project Overview](${{ secrets.SONAR_HOST_URL }}/dashboard?id=${{ steps.sonar.outputs.project_key }})
+          - [📊 SonarQube Dashboard](${DASHBOARD_URL})
+          - [🎯 Project Overview](${DASHBOARD_URL})
           
           ### 📈 Metrics
           | Metric | Value |
@@ -252,7 +255,7 @@ jobs:
           
           # Add failure details if quality gate failed
           if [ "${{ steps.sonar.outputs.sonar_status }}" = "failed" ]; then
-            cat >> $GITHUB_STEP_SUMMARY << 'EOF'
+            cat >> $GITHUB_STEP_SUMMARY << EOF
           ### ❌ Quality Gate Failure
           
           The SonarQube quality gate failed. Please review the issues in the [SonarQube Dashboard](${{ steps.sonar.outputs.dashboard_url }}) and fix the identified problems before merging.
@@ -291,7 +294,7 @@ jobs:
             
             ### 🔗 Links
             - [📊 SonarQube Dashboard](${dashboardUrl})
-            - [🎯 Project Overview](${{ secrets.SONAR_HOST_URL }}/dashboard?id=${projectKey})
+            - [🎯 Project Overview](${dashboardUrl})
             
             ### 📈 Metrics
             | Metric | Value |
