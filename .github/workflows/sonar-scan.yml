@@ -157,6 +157,8 @@ jobs:
             PROJECT_KEY=$(grep "projectKey=" target/sonar/report-task.txt | cut -d'=' -f2)
             TASK_ID=$(grep "ceTaskId=" target/sonar/report-task.txt | cut -d'=' -f2)
             DASHBOARD_URL=$(grep "dashboardUrl=" target/sonar/report-task.txt | cut -d'=' -f2-)
+
+            cat target/sonar/report-task.txt
             
             echo "project_key=${PROJECT_KEY}" >> $GITHUB_OUTPUT
             echo "task_id=${TASK_ID}" >> $GITHUB_OUTPUT
