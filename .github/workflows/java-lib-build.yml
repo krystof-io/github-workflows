@@ -121,16 +121,6 @@ jobs:
           echo "Is snapshot: ${IS_SNAPSHOT}"
           echo "Is release: ${IS_RELEASE}"
 
-      - name: Upload test results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: test-results
-          path: |
-            **/target/surefire-reports/
-            **/target/failsafe-reports/
-          retention-days: 7
-
   # Run Sonar scan
   sonar-scan:
     needs: [build]
