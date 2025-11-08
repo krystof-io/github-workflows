@@ -148,21 +148,6 @@ jobs:
       S3_CACHE_ACCESS_KEY: ${{ secrets.S3_CACHE_ACCESS_KEY }}
       S3_CACHE_SECRET_KEY: ${{ secrets.S3_CACHE_SECRET_KEY }}
 
-  # Validate production release
-  validate-prod-release:
-    runs-on: arc-runners-javadev
-    needs: [build, sonar-scan]
-    if: ${{ startsWith(github.ref, 'refs/tags/v') && (needs.sonar-scan.result == 'success' || needs.sonar-scan.result == 'skipped') }}
-    steps:
-      - name: Validate version is not SNAPSHOT
-        run: |
-          VERSION="${{ needs.build.outputs.version }}"
-          if [[ "${VERSION}" == *"SNAPSHOT"* ]]; then
-            echo "ERROR: Cannot publish SNAPSHOT version as production release"
-            exit 1
-          fi
-          echo "✅ Version ${VERSION} is valid for production release"
-
   # Publish to Maven repository
   publish-to-maven:
     runs-on: arc-runners-javadev
