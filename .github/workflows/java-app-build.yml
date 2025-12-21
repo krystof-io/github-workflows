@@ -113,7 +113,7 @@ jobs:
           AWS_ACCESS_KEY_ID: ${{ secrets.S3_CACHE_ACCESS_KEY }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.S3_CACHE_SECRET_KEY }}
           RUNS_ON_S3_BUCKET_ENDPOINT: ${{ vars.S3_CACHE_ENDPOINT }}
-          RUNS_ON_AWS_REGION: 'garage'
+          RUNS_ON_AWS_REGION: ${{ vars.S3_CACHE_REGION }}
           RUNS_ON_S3_FORCE_PATH_STYLE: 'true'
 
       - name: Initialize Maven settings
@@ -233,7 +233,7 @@ jobs:
           AWS_ACCESS_KEY_ID: ${{ secrets.S3_CACHE_ACCESS_KEY }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.S3_CACHE_SECRET_KEY }}
           RUNS_ON_S3_BUCKET_ENDPOINT: ${{ vars.S3_CACHE_ENDPOINT }}
-          RUNS_ON_AWS_REGION: 'garage'
+          RUNS_ON_AWS_REGION: ${{ vars.S3_CACHE_REGION }}
           RUNS_ON_S3_FORCE_PATH_STYLE: 'true'
 
       - name: Initialize Maven settings
