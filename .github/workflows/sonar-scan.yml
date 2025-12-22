@@ -142,7 +142,7 @@ jobs:
           # Run SonarQube analysis
           set +e  # Don't exit on failure so we can capture results
           
-          mvn sonar:sonar \
+          mvn org.sonarsource.scanner.maven:sonar-maven-plugin:sonar \
             -Dsonar.host.url=${{ env.SONAR_HOST_URL }} \
             -Dsonar.token=${{ env.SONAR_TOKEN }} \
             -Dsonar.qualitygate.wait=true \
