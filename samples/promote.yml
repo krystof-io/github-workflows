@@ -1,0 +1,25 @@
+# Production Promotion Workflow for Spring Boot Applications
+# Location: Application repository at .github/workflows/promote.yml
+#
+# Triggers on version tags (v*) to deploy to production.
+# Tags are created by the release.yml workflow via Maven release.
+
+name: Prod Promotion
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  promote-to-prod:
+    uses: krystof-io/github-workflows/.github/workflows/java-app-build.yml@main
+    with:
+      app_name: my-service
+      target_clusters: '["private"]'
+
+      # Optional customizations:
+      # java_version: '21'           # Default: '21'
+      # maven_profiles: 'prod'       # Default: ''
+
+    secrets: inherit

@@ -123,15 +123,14 @@ cd my-service
 # Create workflow directory
 mkdir -p .github/workflows
 
-# Add files (from artifacts provided)
-# - .github/workflows/ci-cd.yml
+# Add workflow files:
+# - .github/workflows/build.yml    (build and dev deploy)
+# - .github/workflows/promote.yml  (prod promotion on v* tags)
+# - .github/workflows/release.yml  (manual Maven release)
 # - pom.xml
 
-# Update ci-cd.yml with your org name
-sed -i 's/krystof-io/YOUR_ACTUAL_ORG/g' .github/workflows/ci-cd.yml
-
 git add .
-git commit -m "Add CI/CD workflow"
+git commit -m "Add CI/CD workflows"
 git push origin main
 ```
 
@@ -265,51 +264,59 @@ Create `~/.m2/settings.xml` on the runner:
 
 1. **Create repository** from template or start fresh
 2. **Add pom.xml** with your application configuration
-3. **Add CI/CD workflow file** (`.github/workflows/ci-cd.yml`):
+3. **Add build workflow** (`.github/workflows/build.yml`):
    ```yaml
-   name: CI/CD Pipeline
+   name: Build and Dev Deploy
    on:
      push:
-       branches: [main, 'feature/**']
-       tags: ['v*']
+       branches: ["*"]
+       tags-ignore: ['v*']
+     pull_request:
+       branches: [main]
+     workflow_dispatch:
    jobs:
-     build-and-deploy:
+     build-and-dev-deploy:
        uses: krystof-io/github-workflows/.github/workflows/java-app-build.yml@main
        with:
          app_name: my-new-service
+         target_clusters: '["private"]'
        secrets: inherit
    ```
-4. **Add Maven release workflow file** (`.github/workflows/release.yml`):
+4. **Add promote workflow** (`.github/workflows/promote.yml`):
+   ```yaml
+   name: Prod Promotion
+   on:
+     push:
+       tags: ['v*']
+   jobs:
+     promote-to-prod:
+       uses: krystof-io/github-workflows/.github/workflows/java-app-build.yml@main
+       with:
+         app_name: my-new-service
+         target_clusters: '["private"]'
+       secrets: inherit
+   ```
+5. **Add release workflow** (`.github/workflows/release.yml`):
    ```yaml
    name: Maven Release
    on:
      workflow_dispatch:
        inputs:
-         release_version:
-           description: 'Release version (e.g., 1.0.0)'
-           required: true
-           type: string
-         next_development_version:
-           description: 'Next development version (e.g., 1.1.0-SNAPSHOT)'
-           required: true
-           type: string
          dry_run:
            description: 'Perform a dry run (no actual release)'
-           required: false
            type: boolean
            default: false
+   permissions:
+     contents: write
    jobs:
      maven-release:
        uses: krystof-io/github-workflows/.github/workflows/maven-release.yml@main
        with:
-         app_name: my-new-service
-         release_version: ${{ github.event.inputs.release_version }}
-         next_development_version: ${{ github.event.inputs.next_development_version }}
-         dry_run: ${{ github.event.inputs.dry_run }}
+         dry_run: ${{ github.event.inputs.dry_run == 'true' }}
        secrets: inherit
    ```
-5. **Create GitOps manifests** in both cluster repos (if deploying to both)
-6. **Push to main** - your app will build and deploy to dev!
+6. **Create GitOps manifests** in cluster repos (if deploying)
+7. **Push to main** - your app will build and deploy to dev!
 
 ### Creating a Release
 

@@ -1,0 +1,41 @@
+# Maven Release Workflow for Spring Boot Applications
+# Location: Application repository at .github/workflows/release.yml
+#
+# Manually triggered to create a Maven release.
+# Creates a version tag which triggers promote.yml for production deployment.
+
+name: Maven Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_version:
+        description: 'Override release version (e.g., 1.0.0) - leave empty for automatic'
+        required: false
+        type: string
+      next_development_version:
+        description: 'Override next development version (e.g., 1.1.0-SNAPSHOT) - leave empty for automatic'
+        required: false
+        type: string
+      dry_run:
+        description: 'Perform a dry run (no actual release)'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  maven-release:
+    uses: krystof-io/github-workflows/.github/workflows/maven-release.yml@main
+    with:
+      release_version: ${{ github.event.inputs.release_version }}
+      next_development_version: ${{ github.event.inputs.next_development_version }}
+      dry_run: ${{ github.event.inputs.dry_run == 'true' }}
+
+      # Optional customizations:
+      # maven_profiles: 'release'    # Default: ''
+
+    secrets: inherit

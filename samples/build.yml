@@ -1,0 +1,31 @@
+# Build and Dev Deploy Workflow for Spring Boot Applications
+# Location: Application repository at .github/workflows/build.yml
+#
+# Builds and deploys to dev on any branch push (except version tags).
+# For production deployment, see promote.yml which triggers on v* tags.
+
+name: Build and Dev Deploy
+
+on:
+  push:
+    branches:
+      - "*"
+    tags-ignore:
+      - 'v*'
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build-and-dev-deploy:
+    uses: krystof-io/github-workflows/.github/workflows/java-app-build.yml@main
+    with:
+      app_name: my-service
+      target_clusters: '["private"]'
+
+      # Optional customizations:
+      # java_version: '21'           # Default: '21'
+      # maven_profiles: 'dev'        # Default: ''
+
+    secrets: inherit

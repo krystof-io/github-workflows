@@ -53,9 +53,11 @@ To add a new cluster, add an entry here. Apps can then target it with `target_cl
 
 ## Branching and Deployment Strategy
 
-- **Feature branches** (`feature/*`, `feat/*`, `bugfix/*`, `fix/*`): Deploy to dev with feature-specific image tags
-- **Main branch**: Deploy to dev with SNAPSHOT versions
-- **Tags** (`v*`): Create PR for production deployment, auto-merged after validation
+- **Feature branches** (`feature/*`, `feat/*`, `bugfix/*`, `fix/*`): Deploy to `dev` namespace with feature-specific image tags
+- **Main branch**: Deploy to `dev` namespace with SNAPSHOT versions
+- **Tags** (`v*`): Deploy to `prod` namespace via auto-merged PR
+
+Namespaces: `dev` and `prod` (previously `kio-dev` and `kio-prod`)
 
 ## Required Secrets (Organization Level)
 
@@ -79,9 +81,13 @@ Workflows expect these secrets to be available:
 
 ## Sample Workflow Usage
 
-See `samples/` directory for example workflow files that consuming repositories should use:
-- `samples/ci-cd-app.yml` - For Spring Boot applications
-- `samples/ci-cd-lib.yml` - For Java libraries
+See `samples/` directory for example workflow files. Spring Boot apps typically use three workflow files:
+- `build.yml` - Build and deploy to dev (triggers on branch push, ignores `v*` tags)
+- `promote.yml` - Deploy to prod (triggers on `v*` tags)
+- `release.yml` - Create Maven releases (manual `workflow_dispatch`)
+
+For Java libraries:
+- `ci-cd-lib.yml` - Build, test, and publish to Maven repository
 
 ## Runner Requirements
 
