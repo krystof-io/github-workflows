@@ -30,7 +30,7 @@ jobs:
       
       # Optional: Customize as needed (these show non-default values)
       # java_version: '21'                    # Default: '17'
-      # target_clusters: '["build", "app"]'   # Default: '["app"]'
+      # target_clusters: '["private", "app"]' # Default: '["app"]'
       # heap_size: '2g'                       # Default: '512m'
       # maven_profiles: 'prod,extra'          # Default: ''
       

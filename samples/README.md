@@ -29,7 +29,7 @@ Create the following repositories in your GitHub organization:
 # Infrastructure repositories
 github-workflows          # Shared reusable workflows
 docker-templates         # Generic Dockerfiles
-build-cluster-gitops     # GitOps manifests for build cluster
+private-cluster-gitops   # GitOps manifests for private cluster
 app-cluster-gitops       # GitOps manifests for app cluster
 
 # Application/Library repositories (examples)
@@ -61,9 +61,9 @@ git push origin main
 **Edit `config/clusters.yml`** and update with your actual repository names:
 ```yaml
 clusters:
-  build:
-    gitops_repo: 'krystof-io/build-cluster-gitops'
-    cluster_path: 'build-cluster'
+  private:
+    gitops_repo: 'krystof-io/private-cluster-gitops'
+    cluster_path: 'k8s-manifests/components/apps/workloads'
   app:
     gitops_repo: 'krystof-io/app-cluster-gitops'
     cluster_path: 'app-cluster'
@@ -90,22 +90,22 @@ git push origin main
 
 ### 4. Set Up GitOps Repositories
 
-**For both**: `build-cluster-gitops` and `app-cluster-gitops`
+**For both**: `private-cluster-gitops` and `app-cluster-gitops`
 
 ```bash
-git clone git@github.com:krystof-io/build-cluster-gitops.git  # or app-cluster-gitops
-cd build-cluster-gitops
+git clone git@github.com:krystof-io/private-cluster-gitops.git  # or app-cluster-gitops
+cd private-cluster-gitops
 
 # Create directory structure (example for one app)
 mkdir -p .github/workflows
-mkdir -p clusters/build-cluster/namespaces/kio-dev/my-service
-mkdir -p clusters/build-cluster/namespaces/kio-prod/my-service
+mkdir -p k8s-manifests/components/apps/workloads/dev/my-service
+mkdir -p k8s-manifests/components/apps/workloads/prod/my-service
 
 # Add validation workflow
 # - .github/workflows/validate-pr.yml
 
 # Add application manifests (HelmRelease or Kustomization)
-# Example: clusters/build-cluster/namespaces/kio-dev/my-service/helmrelease.yaml
+# Example: k8s-manifests/components/apps/workloads/dev/my-service/helmrelease.yaml
 
 git add .
 git commit -m "Initial GitOps structure"
@@ -453,7 +453,7 @@ with:
 ```yaml
 with:
   app_name: my-service
-  target_clusters: '["build", "app"]'
+  target_clusters: '["private", "app"]'
 ```
 
 ### Build Only (No Deployment)

@@ -1,5 +1,5 @@
 # GitOps Repository PR Validation Workflow
-# Location: GitOps repositories (build-cluster-gitops, app-cluster-gitops)
+# Location: GitOps repositories (private-cluster-gitops, app-cluster-gitops)
 #           at .github/workflows/validate-pr.yml
 #
 # This workflow validates deployment PRs to enable safe auto-merge for production.

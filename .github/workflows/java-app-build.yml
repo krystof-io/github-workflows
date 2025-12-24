@@ -340,7 +340,7 @@ jobs:
     with:
       app_name: ${{ inputs.app_name }}
       image_tag: ${{ needs.build.outputs.image_tag }}
-      target_namespace: "kio-dev"
+      target_namespace: "dev"
       gitops_repo: ${{ matrix.gitops_repo }}
       cluster_path: ${{ matrix.cluster_path }}
       cluster_name: ${{ matrix.name }}
@@ -359,7 +359,7 @@ jobs:
     with:
       app_name: ${{ inputs.app_name }}
       image_tag: ${{ needs.build.outputs.image_tag }}
-      target_namespace: "kio-dev"
+      target_namespace: "dev"
       cluster_name: ${{ matrix.name }}
       validation_timeout: 600
       cluster_url: ${{ matrix.cluster_url }}
@@ -412,7 +412,7 @@ jobs:
     with:
       app_name: ${{ inputs.app_name }}
       image_tag: ${{ needs.build.outputs.image_tag }}
-      target_namespace: "kio-prod"
+      target_namespace: "prod"
       gitops_repo: ${{ matrix.gitops_repo }}
       cluster_path: ${{ matrix.cluster_path }}
       cluster_name: ${{ matrix.name }}
@@ -432,7 +432,7 @@ jobs:
     with:
       app_name: ${{ inputs.app_name }}
       image_tag: ${{ needs.build.outputs.image_tag }}
-      target_namespace: "kio-prod"
+      target_namespace: "prod"
       cluster_name: ${{ matrix.name }}
       validation_timeout: 900  # Longer timeout for production
       cluster_url: ${{ matrix.cluster_url }}

@@ -17,7 +17,7 @@ on:
       target_namespace:
         required: true
         type: string
-        description: 'Target namespace (kio-dev, kio-prod, etc.)'
+        description: 'Target namespace (dev, prod, etc.)'
       gitops_repo:
         required: true
         type: string

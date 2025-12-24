@@ -5,12 +5,12 @@
 # Location: github-workflows repo at config/clusters.yml
 
 clusters:
-  # Build cluster - hosts CI/CD infrastructure, Nexus, etc.
-  build:
-    gitops_repo: 'krystof-io/kio-build-cluster'
-    cluster_path: 'k8s-manifests/components/apps'
-    description: 'Build and CI/CD infrastructure cluster'
-    cluster_url: 'https://build.krystof.io:6443'
+  # Private cluster - hosts CI/CD infrastructure, Nexus, etc.
+  private:
+    gitops_repo: 'krystof-io/kio-private-cluster'
+    cluster_path: 'k8s-manifests/components/apps/workloads'
+    description: 'Private infrastructure cluster'
+    cluster_url: 'https://private.krystof.io:6443'
   
   # # App cluster - hosts production applications
   # app:
