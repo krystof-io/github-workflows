@@ -9,8 +9,14 @@ clusters:
   private:
     gitops_repo: 'krystof-io/kio-private-cluster'
     cluster_path: 'k8s-manifests/components/apps/workloads'
-    description: 'Private infrastructure cluster'
+    description: 'Private Infrastructure cluster'
     cluster_url: 'https://private-cluster.krystof.io:6443'
+
+  public:
+    gitops_repo: 'krystof-io/kio-public-cluster'
+    cluster_path: 'k8s-manifests/components/apps/workloads'
+    description: 'Public App cluster'
+    cluster_url: 'https://public-cluster.krystof.io:6443'    
   
   # # App cluster - hosts production applications
   # app:
