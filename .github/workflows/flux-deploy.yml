@@ -44,6 +44,7 @@ on:
 
 jobs:
   deploy:
+    name: deploy (${{ inputs.cluster_name }})
     runs-on: arc-runners-javadev
     steps:
       - name: Deploy via GitOps
