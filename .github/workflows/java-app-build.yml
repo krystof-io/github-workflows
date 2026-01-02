@@ -332,6 +332,7 @@ jobs:
 
   # Deploy to dev environment (direct commit)
   deploy-dev:
+    name: deploy (${{ matrix.name }})
     needs: [build, build-docker-image]
     if: ${{ !startsWith(github.ref, 'refs/tags/v') && needs.build.outputs.has_clusters == 'true' }}
     strategy:
@@ -351,6 +352,7 @@ jobs:
 
   # Validate dev deployment
   validate-dev-deployment:
+    name: validate-deployment (${{ matrix.name }})
     needs: [build, deploy-dev]
     if: ${{ !startsWith(github.ref, 'refs/tags/v') && needs.build.outputs.has_clusters == 'true' }}
     strategy:
@@ -404,6 +406,7 @@ jobs:
 
   # Deploy to prod environment (create PR with auto-merge)
   deploy-prod:
+    name: deploy-prod (${{ matrix.name }})
     needs: [build, validate-prod-release]
     if: startsWith(github.ref, 'refs/tags/v')
     strategy:
@@ -424,6 +427,7 @@ jobs:
 
   # Validate production deployment (after PR merge)
   validate-prod-deployment:
+    name: validate-prod-deployment (${{ matrix.name }})
     needs: [build, deploy-prod]
     if: startsWith(github.ref, 'refs/tags/v')
     strategy:
