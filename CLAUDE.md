@@ -98,10 +98,39 @@ Workflows use self-hosted runners (`arc-runners-javadev`) with:
 - yq, jq, kubectl
 - GitHub CLI (gh)
 
+## Permissions
+
+All workflows declare explicit permissions following the principle of least privilege.
+
+### Reusable Workflow Permissions
+
+| Workflow | Permissions | Reason |
+|----------|-------------|--------|
+| `java-app-build.yml` | `contents: read`, `pull-requests: write` | Checkout code; Sonar PR comments |
+| `java-lib-build.yml` | `contents: read`, `pull-requests: write` | Checkout code; Sonar PR comments |
+| `maven-release.yml` | `contents: read`, `pull-requests: write` | Checkout (writes use CICD_TOKEN PAT) |
+| `sonar-scan.yml` | `contents: read`, `pull-requests: write` | Checkout with history; PR comments |
+| `flux-deploy.yml` | `contents: read` | Checkout (GitOps writes use CICD_TOKEN) |
+| `validate-flux-deployment.yml` | `contents: read` | Minimal (only runs kubectl) |
+
+### Caller Workflow Permissions (in app repos)
+
+| Workflow | Permissions | Reason |
+|----------|-------------|--------|
+| `build.yml` | `contents: read`, `pull-requests: write` | Sonar comments on PRs |
+| `promote.yml` | `contents: read`, `pull-requests: write` | Sonar comments on PRs |
+| `release.yml` | `contents: write`, `pull-requests: write` | Creates tags/commits via PAT |
+| `ci-cd-lib.yml` | `contents: read`, `pull-requests: write` | Sonar comments on PRs |
+| `validate-pr.yml` | `contents: read` | Read-only validation |
+
+**Note:** Write operations to external repositories (GitOps repos) use the `CICD_TOKEN` PAT, not the `GITHUB_TOKEN`, so those don't require additional permissions in the workflow.
+
 ## Architecture Notes
 
 - All workflows use `workflow_call` trigger for reusability
+- All workflows declare explicit `permissions` for security (least privilege)
 - Maven cache is stored in S3-compatible storage using `krystof-io/cache` action
 - Docker images go to a private registry specified by `IMAGE_REGISTRY_HOST`
 - GitOps updates use PR-based flow with auto-merge
 - Deployment validation connects to Kubernetes clusters using service account tokens
+- Matrix jobs (deploy, validate) include cluster name in job display for clarity

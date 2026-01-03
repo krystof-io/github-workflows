@@ -274,6 +274,9 @@ Create `~/.m2/settings.xml` on the runner:
      pull_request:
        branches: [main]
      workflow_dispatch:
+   permissions:
+     contents: read
+     pull-requests: write
    jobs:
      build-and-dev-deploy:
        uses: krystof-io/github-workflows/.github/workflows/java-app-build.yml@main
@@ -288,6 +291,9 @@ Create `~/.m2/settings.xml` on the runner:
    on:
      push:
        tags: ['v*']
+   permissions:
+     contents: read
+     pull-requests: write
    jobs:
      promote-to-prod:
        uses: krystof-io/github-workflows/.github/workflows/java-app-build.yml@main
@@ -308,6 +314,7 @@ Create `~/.m2/settings.xml` on the runner:
            default: false
    permissions:
      contents: write
+     pull-requests: write
    jobs:
      maven-release:
        uses: krystof-io/github-workflows/.github/workflows/maven-release.yml@main
