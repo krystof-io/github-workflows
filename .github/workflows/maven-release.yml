@@ -39,7 +39,8 @@ on:
 
 permissions:
   contents: read
-
+  pull-requests: write
+  
 jobs:
   maven-release:
     runs-on: arc-runners-javadev

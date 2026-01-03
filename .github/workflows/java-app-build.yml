@@ -60,7 +60,8 @@ on:
 
 permissions:
   contents: read
-
+  pull-requests: write
+  
 jobs:
   # Parse cluster configuration and setup matrix
   build:
