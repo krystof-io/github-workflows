@@ -42,6 +42,9 @@ on:
       CICD_USER_NAME:
         required: true
 
+permissions:
+  contents: read
+
 jobs:
   deploy:
     name: deploy (${{ inputs.cluster_name }})

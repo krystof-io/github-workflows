@@ -53,6 +53,10 @@ on:
       S3_CACHE_SECRET_KEY:
         required: true
 
+permissions:
+  contents: read
+  pull-requests: write
+
 jobs:
   sonar-scan:
     runs-on: arc-runners-javadev

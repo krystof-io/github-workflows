@@ -37,6 +37,9 @@ on:
       S3_CACHE_SECRET_KEY:
         required: true
 
+permissions:
+  contents: read
+
 jobs:
   maven-release:
     runs-on: arc-runners-javadev

@@ -58,6 +58,9 @@ on:
       CICD_USER_NAME:
         required: true
 
+permissions:
+  contents: read
+
 jobs:
   # Parse cluster configuration and setup matrix
   build:
