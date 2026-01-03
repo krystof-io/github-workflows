@@ -20,6 +20,10 @@ on:
     branches:
       - main
 
+permissions:
+  contents: read
+  pull-requests: write
+
 jobs:
   build-and-publish:
     # Call the shared workflow for Java libraries

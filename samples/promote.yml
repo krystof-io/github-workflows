@@ -11,6 +11,10 @@ on:
     tags:
       - 'v*'
 
+permissions:
+  contents: read
+  pull-requests: write
+
 jobs:
   promote-to-prod:
     uses: krystof-io/github-workflows/.github/workflows/java-app-build.yml@main
