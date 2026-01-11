@@ -23,7 +23,7 @@ jobs:
       target_clusters: '["private"]'
 
       # Optional customizations:
-      # java_version: '21'           # Default: '21'
+      # java_version: '25'           # Default: '25'
       # maven_profiles: 'prod'       # Default: ''
 
     secrets: inherit

@@ -11,7 +11,7 @@ on:
         type: string
         description: 'Name of the application'
       java_version:
-        default: '21'
+        default: '25'
         type: string
         description: 'Java version to use'
       maven_profiles:
@@ -31,7 +31,7 @@ on:
         type: string
         description: 'Path to Dockerfile within dockerfile_repo'
       base_docker_image:
-        default: 'eclipse-temurin:21-jre-alpine'
+        default: 'eclipse-temurin:25-jre-alpine'
         type: string
         description: 'Base image for Docker build'
     secrets:

@@ -459,7 +459,7 @@ with:
 ```yaml
 with:
   app_name: my-service
-  java_version: '21'
+  java_version: '25'
 ```
 
 ### Deploy to Multiple Clusters

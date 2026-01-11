@@ -93,7 +93,7 @@ For Java libraries:
 
 Workflows use self-hosted runners (`arc-runners-javadev`) with:
 - Docker
-- Java 21 (configurable via `java_version` input)
+- Java 25 (configurable via `java_version` input)
 - Maven
 - yq, jq, kubectl
 - GitHub CLI (gh)
