@@ -48,19 +48,24 @@ jobs:
       published: ${{ steps.publish.outputs.published }}
       spec_changed: ${{ steps.publish.outputs.spec_changed }}
     steps:
-      - name: Checkout code
-        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 #v5
+      - name: Download OpenAPI spec artifact
+        id: download
+        uses: actions/download-artifact@v4
+        with:
+          name: openapi-spec
+          path: ./spec-artifact
+        continue-on-error: true
 
       - name: Check if spec exists
         id: check
         run: |
-          SPEC_PATH="${{ inputs.spec_path }}"
-          if [ -f "${SPEC_PATH}" ]; then
+          # Look for the spec in the downloaded artifact
+          if [ -f "./spec-artifact/openapi.yaml" ]; then
             echo "spec_exists=true" >> $GITHUB_OUTPUT
-            echo "Found OpenAPI spec at ${SPEC_PATH}"
+            echo "Found OpenAPI spec in artifact"
           else
             echo "spec_exists=false" >> $GITHUB_OUTPUT
-            echo "No OpenAPI spec found at ${SPEC_PATH} - skipping publication"
+            echo "No OpenAPI spec artifact found - skipping publication"
           fi
 
       - name: Publish spec to API registry
@@ -72,7 +77,7 @@ jobs:
           API_REGISTRY_REPO="${{ inputs.api_registry_repo }}"
           APP_NAME="${{ inputs.app_name }}"
           VERSION="${{ inputs.version }}"
-          SPEC_PATH="${{ inputs.spec_path }}"
+          SPEC_ARTIFACT="./spec-artifact/openapi.yaml"
 
           # Clone API registry repo
           echo "Cloning API registry: ${API_REGISTRY_REPO}"
@@ -90,7 +95,7 @@ jobs:
           SPEC_CHANGED="true"
           if [ -f "specs/${APP_NAME}/openapi.yaml" ]; then
             # Compare new spec with existing
-            if diff -q "../${SPEC_PATH}" "specs/${APP_NAME}/openapi.yaml" > /dev/null 2>&1; then
+            if diff -q "../${SPEC_ARTIFACT}" "specs/${APP_NAME}/openapi.yaml" > /dev/null 2>&1; then
               echo "OpenAPI spec unchanged - skipping publication"
               echo "published=false" >> $GITHUB_OUTPUT
               echo "spec_changed=false" >> $GITHUB_OUTPUT
@@ -105,8 +110,8 @@ jobs:
           BRANCH_NAME="spec-update/${APP_NAME}/${VERSION}-$(date +%s)"
           git checkout -b "${BRANCH_NAME}"
 
-          # Copy spec file
-          cp "../${SPEC_PATH}" "specs/${APP_NAME}/openapi.yaml"
+          # Copy spec file from artifact
+          cp "../${SPEC_ARTIFACT}" "specs/${APP_NAME}/openapi.yaml"
 
           # Stage and commit
           git add "specs/${APP_NAME}/openapi.yaml"
