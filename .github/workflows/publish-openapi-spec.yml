@@ -1,0 +1,204 @@
+# Reusable workflow for publishing OpenAPI specs to the API registry
+# Location: github-workflows repo at .github/workflows/publish-openapi-spec.yml
+
+name: Publish OpenAPI Spec
+
+on:
+  workflow_call:
+    inputs:
+      app_name:
+        required: true
+        type: string
+        description: 'Name of the application/service'
+      spec_path:
+        default: 'target/openapi.yaml'
+        type: string
+        description: 'Path to the OpenAPI spec file'
+      api_registry_repo:
+        default: 'krystof-io/api-registry'
+        type: string
+        description: 'API registry repository (owner/repo)'
+      version:
+        required: true
+        type: string
+        description: 'Service version (for commit message)'
+    secrets:
+      CICD_TOKEN:
+        required: true
+      CICD_USER_EMAIL:
+        required: true
+      CICD_USER_NAME:
+        required: true
+    outputs:
+      published:
+        description: 'Whether the spec was published (true/false)'
+        value: ${{ jobs.publish.outputs.published }}
+      spec_changed:
+        description: 'Whether the spec content changed from previous version'
+        value: ${{ jobs.publish.outputs.spec_changed }}
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: publish-openapi-spec
+    runs-on: arc-runners-javadev
+    outputs:
+      published: ${{ steps.publish.outputs.published }}
+      spec_changed: ${{ steps.publish.outputs.spec_changed }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 #v5
+
+      - name: Check if spec exists
+        id: check
+        run: |
+          SPEC_PATH="${{ inputs.spec_path }}"
+          if [ -f "${SPEC_PATH}" ]; then
+            echo "spec_exists=true" >> $GITHUB_OUTPUT
+            echo "Found OpenAPI spec at ${SPEC_PATH}"
+          else
+            echo "spec_exists=false" >> $GITHUB_OUTPUT
+            echo "No OpenAPI spec found at ${SPEC_PATH} - skipping publication"
+          fi
+
+      - name: Publish spec to API registry
+        id: publish
+        if: steps.check.outputs.spec_exists == 'true'
+        run: |
+          set -e
+
+          API_REGISTRY_REPO="${{ inputs.api_registry_repo }}"
+          APP_NAME="${{ inputs.app_name }}"
+          VERSION="${{ inputs.version }}"
+          SPEC_PATH="${{ inputs.spec_path }}"
+
+          # Clone API registry repo
+          echo "Cloning API registry: ${API_REGISTRY_REPO}"
+          git clone https://x-access-token:${{ secrets.CICD_TOKEN }}@github.com/${API_REGISTRY_REPO}.git api-registry
+          cd api-registry
+
+          # Configure git
+          git config user.name "${{ secrets.CICD_USER_NAME }}"
+          git config user.email "${{ secrets.CICD_USER_EMAIL }}"
+
+          # Ensure specs directory exists
+          mkdir -p "specs/${APP_NAME}"
+
+          # Check if spec content has changed
+          SPEC_CHANGED="true"
+          if [ -f "specs/${APP_NAME}/openapi.yaml" ]; then
+            # Compare new spec with existing
+            if diff -q "../${SPEC_PATH}" "specs/${APP_NAME}/openapi.yaml" > /dev/null 2>&1; then
+              echo "OpenAPI spec unchanged - skipping publication"
+              echo "published=false" >> $GITHUB_OUTPUT
+              echo "spec_changed=false" >> $GITHUB_OUTPUT
+              exit 0
+            fi
+            echo "OpenAPI spec has changed"
+          else
+            echo "New OpenAPI spec (no previous version exists)"
+          fi
+
+          # Create feature branch
+          BRANCH_NAME="spec-update/${APP_NAME}/${VERSION}-$(date +%s)"
+          git checkout -b "${BRANCH_NAME}"
+
+          # Copy spec file
+          cp "../${SPEC_PATH}" "specs/${APP_NAME}/openapi.yaml"
+
+          # Stage and commit
+          git add "specs/${APP_NAME}/openapi.yaml"
+          git commit -m "chore(specs): update ${APP_NAME} OpenAPI spec (v${VERSION})
+
+          - Service: ${APP_NAME}
+          - Version: ${VERSION}
+          - Source commit: ${{ github.sha }}
+          - Triggered by: ${{ github.actor }}
+          - Workflow: ${{ github.run_id }}"
+
+          # Push branch
+          git push origin "${BRANCH_NAME}"
+
+          # Create and merge PR
+          export GITHUB_TOKEN="${{ secrets.CICD_TOKEN }}"
+
+          echo "Creating pull request..."
+          gh pr create \
+            --repo "${API_REGISTRY_REPO}" \
+            --title "Update ${APP_NAME} OpenAPI spec (v${VERSION})" \
+            --body "Automated OpenAPI spec update for ${APP_NAME}
+
+          **Service**: \`${APP_NAME}\`
+          **Version**: \`${VERSION}\`
+          **Source Repository**: \`${{ github.repository }}\`
+          **Source Commit**: \`${{ github.sha }}\`
+          **Triggered by**: ${{ github.actor }}
+
+          This PR will be automatically merged. The API registry will generate a new client library after merge." \
+            --base main \
+            --head "${BRANCH_NAME}"
+
+          echo "Merging pull request..."
+          gh pr merge "${BRANCH_NAME}" --repo "${API_REGISTRY_REPO}" --squash --delete-branch
+
+          echo "published=true" >> $GITHUB_OUTPUT
+          echo "spec_changed=true" >> $GITHUB_OUTPUT
+          echo "OpenAPI spec published successfully"
+
+      - name: Set outputs when skipped
+        if: steps.check.outputs.spec_exists != 'true'
+        run: |
+          echo "published=false" >> $GITHUB_OUTPUT
+          echo "spec_changed=false" >> $GITHUB_OUTPUT
+
+      - name: Publication Summary
+        if: always()
+        run: |
+          APP_NAME="${{ inputs.app_name }}"
+          VERSION="${{ inputs.version }}"
+          SPEC_PATH="${{ inputs.spec_path }}"
+          API_REGISTRY_REPO="${{ inputs.api_registry_repo }}"
+          SPEC_EXISTS="${{ steps.check.outputs.spec_exists }}"
+          PUBLISHED="${{ steps.publish.outputs.published }}"
+          SPEC_CHANGED="${{ steps.publish.outputs.spec_changed }}"
+
+          echo "## OpenAPI Spec Publication Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Application Information" >> $GITHUB_STEP_SUMMARY
+          echo "- **Service**: \`${APP_NAME}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version**: \`${VERSION}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Spec Path**: \`${SPEC_PATH}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Registry**: [\`${API_REGISTRY_REPO}\`](https://github.com/${API_REGISTRY_REPO})" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [[ "${SPEC_EXISTS}" != "true" ]]; then
+            echo "### Status: Skipped" >> $GITHUB_STEP_SUMMARY
+            echo "No OpenAPI spec found at \`${SPEC_PATH}\`." >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "To generate OpenAPI specs, add an integration test that exports the spec:" >> $GITHUB_STEP_SUMMARY
+            echo '```java' >> $GITHUB_STEP_SUMMARY
+            echo '@Test' >> $GITHUB_STEP_SUMMARY
+            echo 'void generateOpenApiSpec() throws Exception {' >> $GITHUB_STEP_SUMMARY
+            echo '    String yaml = mockMvc.perform(get("/api-docs.yaml"))' >> $GITHUB_STEP_SUMMARY
+            echo '            .andExpect(status().isOk())' >> $GITHUB_STEP_SUMMARY
+            echo '            .andReturn().getResponse().getContentAsString();' >> $GITHUB_STEP_SUMMARY
+            echo '    Files.writeString(Path.of("target/openapi.yaml"), yaml);' >> $GITHUB_STEP_SUMMARY
+            echo '}' >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          elif [[ "${PUBLISHED}" == "true" ]]; then
+            echo "### Status: Published" >> $GITHUB_STEP_SUMMARY
+            echo "OpenAPI spec successfully published to the API registry." >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**Next steps:**" >> $GITHUB_STEP_SUMMARY
+            echo "- The API registry will automatically generate a new client library" >> $GITHUB_STEP_SUMMARY
+            echo "- Client artifact: \`io.krystof.api:${APP_NAME}-client\`" >> $GITHUB_STEP_SUMMARY
+          elif [[ "${SPEC_CHANGED}" == "false" ]]; then
+            echo "### Status: Unchanged" >> $GITHUB_STEP_SUMMARY
+            echo "OpenAPI spec content is identical to the current version in the registry." >> $GITHUB_STEP_SUMMARY
+            echo "No update needed." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### Status: Failed" >> $GITHUB_STEP_SUMMARY
+            echo "Failed to publish OpenAPI spec. Check the job logs for details." >> $GITHUB_STEP_SUMMARY
+          fi

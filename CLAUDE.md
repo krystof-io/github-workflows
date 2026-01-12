@@ -13,6 +13,7 @@ Main workflow for Java Spring Boot applications. Handles:
 - Maven build, test, and package
 - Docker image build and push (uses Dockerfiles from `krystof-io/devops-templates`)
 - SonarQube analysis (via `sonar-scan.yml`)
+- OpenAPI spec publishing to API registry (via `publish-openapi-spec.yml`, auto-detected)
 - GitOps deployment via Flux (via `flux-deploy.yml`)
 - Deployment validation (via `validate-flux-deployment.yml`)
 
@@ -36,6 +37,46 @@ Updates GitOps repositories with new image tags. Creates PRs that are auto-merge
 
 ### `.github/workflows/validate-flux-deployment.yml`
 Validates Kubernetes deployments after Flux reconciliation. Checks that correct image tags are running in pods.
+
+### `.github/workflows/publish-openapi-spec.yml`
+Publishes OpenAPI specs from services to the central API registry. Features:
+- Auto-detection: If `target/openapi.yaml` exists after build, it's automatically published
+- Content comparison: Only publishes if spec content has changed
+- PR-based: Creates and auto-merges PRs to the API registry repo
+- Used by `java-app-build.yml` automatically (no opt-in required)
+
+## API Registry
+
+The API registry (`krystof-io/api-registry`) is a central repository that:
+1. Stores OpenAPI specs from all services under `specs/{service-name}/openapi.yaml`
+2. Automatically generates typed Java clients when specs change
+3. Publishes clients to Maven as `io.krystof.api:{service-name}-client`
+
+### How Services Publish Specs
+
+Services generate OpenAPI specs during integration tests:
+
+```java
+@Test
+void generateOpenApiSpec() throws Exception {
+    String yaml = mockMvc.perform(get("/api-docs.yaml"))
+            .andExpect(status().isOk())
+            .andReturn().getResponse().getContentAsString();
+    Files.writeString(Path.of("target/openapi.yaml"), yaml);
+}
+```
+
+After `mvn verify`, if `target/openapi.yaml` exists, `java-app-build.yml` automatically publishes it.
+
+### Customization
+
+Override defaults in your workflow call:
+```yaml
+with:
+  app_name: my-service
+  openapi_spec_path: 'target/openapi.yaml'       # Default
+  api_registry_repo: 'krystof-io/api-registry'   # Default
+```
 
 ## Cluster Configuration
 
@@ -112,6 +153,7 @@ All workflows declare explicit permissions following the principle of least priv
 | `sonar-scan.yml` | `contents: read`, `pull-requests: write` | Checkout with history; PR comments |
 | `flux-deploy.yml` | `contents: read` | Checkout (GitOps writes use CICD_TOKEN) |
 | `validate-flux-deployment.yml` | `contents: read` | Minimal (only runs kubectl) |
+| `publish-openapi-spec.yml` | `contents: read` | Checkout (registry writes use CICD_TOKEN) |
 
 ### Caller Workflow Permissions (in app repos)
 

@@ -34,6 +34,14 @@ on:
         default: 'eclipse-temurin:25-jre-alpine'
         type: string
         description: 'Base image for Docker build'
+      openapi_spec_path:
+        default: 'target/openapi.yaml'
+        type: string
+        description: 'Path to OpenAPI spec file (auto-published if exists)'
+      api_registry_repo:
+        default: 'krystof-io/api-registry'
+        type: string
+        description: 'API registry repository for OpenAPI specs'
     secrets:
       IMAGE_REGISTRY_USERNAME:
         required: true
@@ -333,6 +341,20 @@ jobs:
       S3_CACHE_ACCESS_KEY: ${{ secrets.S3_CACHE_ACCESS_KEY }}
       S3_CACHE_SECRET_KEY: ${{ secrets.S3_CACHE_SECRET_KEY }}
 
+  # Publish OpenAPI spec to API registry (auto-detected)
+  publish-openapi:
+    needs: [build]
+    if: ${{ !contains(github.event.head_commit.message, 'prepare for next development iteration') }}
+    uses: ./.github/workflows/publish-openapi-spec.yml
+    with:
+      app_name: ${{ inputs.app_name }}
+      spec_path: ${{ inputs.openapi_spec_path }}
+      api_registry_repo: ${{ inputs.api_registry_repo }}
+      version: ${{ needs.build.outputs.version }}
+    secrets:
+      CICD_TOKEN: ${{ secrets.CICD_TOKEN }}
+      CICD_USER_EMAIL: ${{ secrets.CICD_USER_EMAIL }}
+      CICD_USER_NAME: ${{ secrets.CICD_USER_NAME }}
 
   # Deploy to dev environment (direct commit)
   deploy-dev:
@@ -452,7 +474,7 @@ jobs:
   workflow-summary:
     runs-on: arc-runners-javadev
     if: always()
-    needs: [build, build-docker-image, sonar-scan, deploy-dev, validate-dev-deployment, validate-prod-release, deploy-prod, validate-prod-deployment]
+    needs: [build, build-docker-image, sonar-scan, publish-openapi, deploy-dev, validate-dev-deployment, validate-prod-release, deploy-prod, validate-prod-deployment]
     steps:
       - name: Generate Workflow Summary
         run: |
@@ -497,7 +519,16 @@ jobs:
           else
             echo "| 🔍 SonarQube Scan | ❌ Failed | Quality gate failed |" >> $GITHUB_STEP_SUMMARY
           fi
-          
+
+          # OpenAPI spec publication
+          if [[ "${{ needs.publish-openapi.result }}" == "success" ]]; then
+            echo "| 📋 OpenAPI Spec | ✅ Published | Spec published to API registry |" >> $GITHUB_STEP_SUMMARY
+          elif [[ "${{ needs.publish-openapi.result }}" == "skipped" ]]; then
+            echo "| 📋 OpenAPI Spec | ⏭️ Skipped | No spec found or skipped by commit message |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| 📋 OpenAPI Spec | ❌ Failed | Spec publication failed |" >> $GITHUB_STEP_SUMMARY
+          fi
+
           # Development deployment
           if [[ "${HAS_CLUSTERS}" == "true" && "${IS_RELEASE}" == "false" ]]; then
             if [[ "${{ needs.deploy-dev.result }}" == "success" ]]; then

@@ -32,4 +32,8 @@ jobs:
       # java_version: '25'           # Default: '25'
       # maven_profiles: 'dev'        # Default: ''
 
+      # OpenAPI spec publishing (auto-detected if spec file exists):
+      # openapi_spec_path: 'target/openapi.yaml'       # Default: 'target/openapi.yaml'
+      # api_registry_repo: 'krystof-io/api-registry'   # Default: 'krystof-io/api-registry'
+
     secrets: inherit
