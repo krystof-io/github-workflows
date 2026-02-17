@@ -89,13 +89,13 @@ jobs:
           git config user.email "${{ secrets.CICD_USER_EMAIL }}"
 
           # Ensure specs directory exists
-          mkdir -p "specs/${APP_NAME}"
+          mkdir -p "specs/services/${APP_NAME}"
 
           # Check if spec content has changed
           SPEC_CHANGED="true"
-          if [ -f "specs/${APP_NAME}/openapi.yaml" ]; then
+          if [ -f "specs/services/${APP_NAME}/openapi.yaml" ]; then
             # Compare new spec with existing
-            if diff -q "../${SPEC_ARTIFACT}" "specs/${APP_NAME}/openapi.yaml" > /dev/null 2>&1; then
+            if diff -q "../${SPEC_ARTIFACT}" "specs/services/${APP_NAME}/openapi.yaml" > /dev/null 2>&1; then
               echo "OpenAPI spec unchanged - skipping publication"
               echo "published=false" >> $GITHUB_OUTPUT
               echo "spec_changed=false" >> $GITHUB_OUTPUT
@@ -111,10 +111,10 @@ jobs:
           git checkout -b "${BRANCH_NAME}"
 
           # Copy spec file from artifact
-          cp "../${SPEC_ARTIFACT}" "specs/${APP_NAME}/openapi.yaml"
+          cp "../${SPEC_ARTIFACT}" "specs/services/${APP_NAME}/openapi.yaml"
 
           # Stage and commit
-          git add "specs/${APP_NAME}/openapi.yaml"
+          git add "specs/services/${APP_NAME}/openapi.yaml"
           git commit -m "chore(specs): update ${APP_NAME} OpenAPI spec (v${VERSION})
 
           - Service: ${APP_NAME}

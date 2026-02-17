@@ -48,7 +48,7 @@ Publishes OpenAPI specs from services to the central API registry. Features:
 ## API Registry
 
 The API registry (`krystof-io/api-registry`) is a central repository that:
-1. Stores OpenAPI specs from all services under `specs/{service-name}/openapi.yaml`
+1. Stores OpenAPI specs from all services under `specs/services/{service-name}/openapi.yaml`
 2. Automatically generates typed Java clients when specs change
 3. Publishes clients to Maven as `io.krystof.api:{service-name}-client`
 
