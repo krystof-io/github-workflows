@@ -1,0 +1,46 @@
+# Maven Release Workflow for Spring Boot Applications
+# Location: Application repository at .github/workflows/release.yml
+#
+# This is the ONLY release workflow file needed in your application repository.
+# All the Maven release logic is handled by the shared workflow.
+
+name: Maven Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_version:
+        description: 'Override release version (e.g., 1.0.0) - leave empty for automatic'
+        required: false
+        type: string
+      next_development_version:
+        description: 'Override next development version (e.g., 1.1.0-SNAPSHOT) - leave empty for automatic'
+        required: false
+        type: string
+      dry_run:
+        description: 'Perform a dry run (no actual release)'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  maven-release:
+    # Call the shared workflow for Maven releases
+    uses: krystof-io/github-workflows/.github/workflows/maven-release.yml@main
+    with:
+
+      # Required: Release configuration
+      release_version: ${{ github.event.inputs.release_version }}
+      next_development_version: ${{ github.event.inputs.next_development_version }}
+      dry_run: ${{ github.event.inputs.dry_run == 'true' }}
+
+      # Optional: Customize as needed (these show non-default values)
+      # maven_profiles: 'prod,extra'          # Default: ''
+      # git_user_name: 'Custom Release Bot'   # Default: 'github-actions[bot]'
+      # git_user_email: 'bot@company.com'     # Default: 'github-actions[bot]@users.noreply.github.com'
+
+    secrets: inherit
