@@ -33,7 +33,7 @@ on:
       base_docker_image:
         default: 'eclipse-temurin:25-jre-alpine'
         type: string
-        description: 'Base image for Docker build'
+        description: 'Base image for Docker build (without registry prefix - DOCKER_PROXY_HOST is prepended automatically)'
       openapi_spec_path:
         default: 'target/openapi.yaml'
         type: string
@@ -307,7 +307,7 @@ jobs:
           
           docker build \
             -f docker-templates/${{ inputs.dockerfile_path }} \
-            --build-arg BASE_IMAGE=${{ inputs.base_docker_image }} \
+            --build-arg BASE_IMAGE=${{ vars.DOCKER_PROXY_HOST || 'docker-proxy.private.krystof.io' }}/${{ inputs.base_docker_image }} \
             --build-arg JAR_FILE=${{ steps.find_jar.outputs.jar_file }} \
             -t "${IMAGE_NAME}" \
             .
@@ -318,7 +318,7 @@ jobs:
         run: |
           APP_NAME="${{ inputs.app_name }}"
           IMAGE_TAG="${{ needs.build.outputs.image_tag }}"
-          BASE_IMAGE="${{ inputs.base_docker_image }}"
+          BASE_IMAGE="${{ vars.DOCKER_PROXY_HOST || 'docker-proxy.private.krystof.io' }}/${{ inputs.base_docker_image }}"
           JAR_FILE="${{ steps.find_jar.outputs.jar_file }}"
           IMAGE_NAME="${{ vars.IMAGE_REGISTRY_HOST }}/krystof-io/${{ inputs.app_name }}:${{ needs.build.outputs.image_tag }}"
           DOCKERFILE_PATH="${{ inputs.dockerfile_path }}"
