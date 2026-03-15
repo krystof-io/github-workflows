@@ -31,4 +31,30 @@
         <cve>CVE-2026-29062</cve>
     </suppress>
 
+    <!--
+        CVE-2025-15599 & CVE-2026-0540: DOMPurify XSS bypass via missing rawtext
+        elements in SAFE_FOR_XML regex. Fixed in DOMPurify 3.3.2 / 2.5.9, but
+        swagger-ui 5.32.0 (latest) still bundles a vulnerable version.
+        No upstream fix available yet.
+        Risk is mitigated: Swagger UI is restricted to non-production profiles only.
+        Tracking: https://github.com/swagger-api/swagger-ui/issues/10478
+        Suppress until: swagger-ui ships with DOMPurify >= 3.3.2
+    -->
+    <suppress>
+        <notes><![CDATA[
+            Suppressed pending swagger-ui upgrade of bundled DOMPurify.
+            Swagger UI is disabled in production profiles.
+        ]]></notes>
+        <filePath regex="true">.*swagger-ui.*\.jar.*</filePath>
+        <cve>CVE-2025-15599</cve>
+    </suppress>
+    <suppress>
+        <notes><![CDATA[
+            Suppressed pending swagger-ui upgrade of bundled DOMPurify.
+            Swagger UI is disabled in production profiles.
+        ]]></notes>
+        <filePath regex="true">.*swagger-ui.*\.jar.*</filePath>
+        <cve>CVE-2026-0540</cve>
+    </suppress>
+
 </suppressions>
