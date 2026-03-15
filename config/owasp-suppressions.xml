@@ -12,4 +12,23 @@
         <cve>CVE-2022-31691</cve>
     </suppress>
 
+    <!--                                                                    
+       CVE-2026-29062: Nesting Depth Constraint Bypass in UTF8DataInputJsonParser (CVSS 8.7)
+       Fixed in Jackson 3.1.0, but Spring Boot 4.0.3 ships Jackson 3.0.4.
+       Jackson 3.0.x is not LTS and will not receive a patch; Spring Boot will
+       upgrade to Jackson 3.1 in a future release.                            
+       Risk is mitigated: all JSON-accepting endpoints require authentication,   
+       and @Valid DTOs are shallow structures that reject deeply-nested input.
+       Tracking: https://github.com/spring-projects/spring-framework/issues/36130
+                 https://github.com/spring-projects/spring-boot/issues/49365
+       Suppress until: Spring Boot upgrades to Jackson 3.1+
+   -->
+    <suppress>
+        <notes><![CDATA[                                                       
+           Suppressed pending Spring Boot upgrade to Jackson 3.1+.
+           All inbound JSON is behind authentication; flat DTOs limit nesting.
+       ]]></notes>
+        <cve>CVE-2026-29062</cve>
+    </suppress>
+
 </suppressions>
