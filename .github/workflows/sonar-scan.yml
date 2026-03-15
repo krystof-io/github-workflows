@@ -130,13 +130,22 @@ jobs:
             PROFILES="-P${{ inputs.maven_profiles }}"
           fi
           mvn clean verify ${PROFILES}
-                    
+
+      - name: Checkout shared config
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          repository: krystof-io/github-workflows
+          path: .github-workflows
+          sparse-checkout: config/owasp-suppressions.xml
+
       - name: Pre Sonar Dep Check
         run: |
           mvn org.owasp:dependency-check-maven:12.1.8:check \
             -Dformats=HTML,XML,JSON \
             -DnvdApiKey=${{ env.NVD_API_KEY }} \
-            -DskipTests 
+            -DsuppressionFiles=.github-workflows/config/owasp-suppressions.xml \
+            -DskipTests
+          
         env:
           NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
 
