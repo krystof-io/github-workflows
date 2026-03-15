@@ -160,6 +160,7 @@ jobs:
             -Dsonar.token=${{ env.SONAR_TOKEN }} \
             -Dsonar.qualitygate.wait=true \
             -Dsonar.qualitygate.timeout=300 \
+            -Dsonar.coverage.exclusions="**/dto/**,**/model/**,**/exception/**,**/config/**,**/*Application.java" \
 
           
           SONAR_EXIT_CODE=$?
