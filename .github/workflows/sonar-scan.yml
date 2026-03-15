@@ -160,8 +160,6 @@ jobs:
             -Dsonar.token=${{ env.SONAR_TOKEN }} \
             -Dsonar.qualitygate.wait=true \
             -Dsonar.qualitygate.timeout=300 \
-            -Dsonar.dependencyCheck.jsonReportPath=target/dependency-check-report.json \
-            -Dsonar.dependencyCheck.htmlReportPath=target/dependency-check-report.html
 
           
           SONAR_EXIT_CODE=$?
