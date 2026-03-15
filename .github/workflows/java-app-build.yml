@@ -18,6 +18,10 @@ on:
         default: ''
         type: string
         description: 'Maven profiles to activate (comma-separated)'
+      sonar_coverage_exclusions:
+        default: '**/dto/**,**/model/**,**/exception/**,**/config/**,**/*Application.java'
+        type: string
+        description: 'Comma-separated glob patterns for SonarQube coverage exclusions'
       target_clusters:
         default: '[]'
         type: string
@@ -342,6 +346,7 @@ jobs:
     with:
       java_version: ${{ inputs.java_version }}
       maven_profiles: ${{ inputs.maven_profiles }}
+      sonar_coverage_exclusions: ${{ inputs.sonar_coverage_exclusions }}
     secrets:
       MAVEN_REPO_USERNAME: ${{ secrets.MAVEN_REPO_USERNAME }}
       MAVEN_REPO_PASSWORD: ${{ secrets.MAVEN_REPO_PASSWORD }}

@@ -14,6 +14,10 @@ on:
         default: ''
         type: string
         description: 'Maven profiles to activate (comma-separated)'
+      sonar_coverage_exclusions:
+        default: '**/dto/**,**/model/**,**/exception/**,**/config/**,**/*Application.java'
+        type: string
+        description: 'Comma-separated glob patterns for SonarQube coverage exclusions'
     outputs:
       sonar_status:
         description: 'SonarQube analysis status (passed/failed)'
@@ -160,7 +164,7 @@ jobs:
             -Dsonar.token=${{ env.SONAR_TOKEN }} \
             -Dsonar.qualitygate.wait=true \
             -Dsonar.qualitygate.timeout=300 \
-            -Dsonar.coverage.exclusions="**/dto/**,**/model/**,**/exception/**,**/config/**,**/*Application.java" \
+            -Dsonar.coverage.exclusions="${{ inputs.sonar_coverage_exclusions }}" \
 
           
           SONAR_EXIT_CODE=$?
