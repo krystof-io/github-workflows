@@ -353,17 +353,31 @@ jobs:
           SEVERITY: CRITICAL,HIGH
           CLUSTER_NAME: ${{ matrix.name }}
         run: |
-          # Get all unique images from running pods (containers + init containers)
-          ALL_IMAGES=$(kubectl get pods --all-namespaces \
-            -o jsonpath='{range .items[*]}{range .spec.containers[*]}{.image}{"\n"}{end}{range .spec.initContainers[*]}{.image}{"\n"}{end}{end}' \
-            | sort -u | grep -v '^$')
+          # Get all images with workload context (namespace, app label, owner)
+          kubectl get pods --all-namespaces -o json | jq -c '
+            [.items[] |
+              .metadata.namespace as $ns |
+              (.metadata.labels["app.kubernetes.io/name"] // .metadata.labels["app"] // .metadata.labels["app.kubernetes.io/component"] // .metadata.ownerReferences[0].name // .metadata.name) as $workload |
+              ((.spec.containers // [])[], (.spec.initContainers // [])[]) |
+              {image: .image, namespace: $ns, workload: $workload}
+            ]' > /tmp/all-pod-images.json
 
-          ALL_COUNT=$(echo "$ALL_IMAGES" | wc -l)
+          ALL_COUNT=$(jq '[.[].image] | unique | length' /tmp/all-pod-images.json)
           echo "Found ${ALL_COUNT} unique images in ${CLUSTER_NAME} cluster"
 
-          # Filter out our app images (scanned in the app-scan job)
-          THIRD_PARTY=$(echo "$ALL_IMAGES" | grep -v "krystof-io/" || true)
-          IMAGE_COUNT=$(echo "$THIRD_PARTY" | grep -c . || echo "0")
+          # Filter out our app images, then group by image with "used by" context
+          jq -c '
+            [.[] | select(.image | contains("krystof-io/") | not)] |
+            group_by(.image) |
+            map({
+              image: .[0].image,
+              used_by: ([.[] | "\(.namespace)/\(.workload)"] | unique | join(", "))
+            }) |
+            sort_by(.image) |
+            .[]
+          ' /tmp/all-pod-images.json > /tmp/third-party-images.jsonl
+
+          IMAGE_COUNT=$(wc -l < /tmp/third-party-images.jsonl)
           echo "Third-party images to scan: ${IMAGE_COUNT} (excluded $(( ALL_COUNT - IMAGE_COUNT )) app images)"
 
           if [ "$IMAGE_COUNT" -eq 0 ]; then
@@ -383,14 +397,16 @@ jobs:
           IMAGES_CLEAN=0
           IMAGES_FAILED=0
 
-          while IFS= read -r IMAGE_REF; do
+          while read -r ENTRY; do
+            IMAGE_REF=$(echo "$ENTRY" | jq -r '.image')
+            USED_BY=$(echo "$ENTRY" | jq -r '.used_by')
             [ -n "$IMAGE_REF" ] || continue
             SAFE_KEY=$(echo "$IMAGE_REF" | tr -c 'a-zA-Z0-9_-' '_')
 
             # Clean display name: strip registry prefix, keep image:tag
             DISPLAY_NAME=$(echo "$IMAGE_REF" | sed 's|^[^/]*\.[^/]*/||; s|^library/||')
 
-            echo "::group::Scanning ${IMAGE_REF}"
+            echo "::group::Scanning ${IMAGE_REF} (${USED_BY})"
 
             SKIP_FLAGS=""
             if [ "$FIRST_SCAN" = "false" ]; then
@@ -415,7 +431,7 @@ jobs:
             echo "::endgroup::"
 
             if [ $SCAN_EXIT -ne 0 ] || [ ! -s "/tmp/scan-${SAFE_KEY}.json" ]; then
-              SUMMARY_ROWS+="| :x: | ${DISPLAY_NAME} | _scan failed_ | - | - |"$'\n'
+              SUMMARY_ROWS+="| :x: | ${DISPLAY_NAME} | ${USED_BY} | _scan failed_ | - | - |"$'\n'
               IMAGES_FAILED=$((IMAGES_FAILED + 1))
               continue
             fi
@@ -430,15 +446,15 @@ jobs:
             if [ "$CRITICAL" -gt 0 ]; then
               ICON=":red_circle:"
               IMAGES_WITH_VULNS=$((IMAGES_WITH_VULNS + 1))
-              SUMMARY_ROWS+="| ${ICON} | **${DISPLAY_NAME}** | **${CRITICAL}** | ${HIGH} | **${IMG_TOTAL}** |"$'\n'
+              SUMMARY_ROWS+="| ${ICON} | **${DISPLAY_NAME}** | ${USED_BY} | **${CRITICAL}** | ${HIGH} | **${IMG_TOTAL}** |"$'\n'
             elif [ "$HIGH" -gt 0 ]; then
               ICON=":orange_circle:"
               IMAGES_WITH_VULNS=$((IMAGES_WITH_VULNS + 1))
-              SUMMARY_ROWS+="| ${ICON} | **${DISPLAY_NAME}** | ${CRITICAL} | **${HIGH}** | **${IMG_TOTAL}** |"$'\n'
+              SUMMARY_ROWS+="| ${ICON} | **${DISPLAY_NAME}** | ${USED_BY} | ${CRITICAL} | **${HIGH}** | **${IMG_TOTAL}** |"$'\n'
             else
               ICON=":green_circle:"
               IMAGES_CLEAN=$((IMAGES_CLEAN + 1))
-              SUMMARY_ROWS+="| ${ICON} | ${DISPLAY_NAME} | ${CRITICAL} | ${HIGH} | ${IMG_TOTAL} |"$'\n'
+              SUMMARY_ROWS+="| ${ICON} | ${DISPLAY_NAME} | ${USED_BY} | ${CRITICAL} | ${HIGH} | ${IMG_TOTAL} |"$'\n'
             fi
 
             # Collapsible detail section
@@ -458,7 +474,7 @@ jobs:
               DETAILS+="${VULN_TABLE}"$'\n'
               DETAILS+=$'\n'"</details>"$'\n\n'
             fi
-          done <<< "$THIRD_PARTY"
+          done < /tmp/third-party-images.jsonl
 
           # Write summary
           {
@@ -481,12 +497,12 @@ jobs:
             echo ""
             echo "## Overview"
             echo ""
-            echo "| Status | Image | Critical | High | Total |"
-            echo "|:------:|-------|:--------:|:----:|:-----:|"
+            echo "| Status | Image | Used By | Critical | High | Total |"
+            echo "|:------:|-------|---------|:--------:|:----:|:-----:|"
             echo -n "${SUMMARY_ROWS}"
 
             if [ "$IMAGES_WITH_VULNS" -gt 0 ] || [ "$IMAGES_FAILED" -gt 0 ]; then
-              echo "| | **Totals** | **${TOTAL_CRITICAL}** | **${TOTAL_HIGH}** | **${TOTAL_ALL}** |"
+              echo "| | | **Totals** | **${TOTAL_CRITICAL}** | **${TOTAL_HIGH}** | **${TOTAL_ALL}** |"
             fi
 
             echo ""
