@@ -65,8 +65,8 @@ jobs:
                 VALUES="${NS_DIR}${APP}/${APP}-values.yaml"
                 [ -f "$VALUES" ] || continue
 
-                TAG=$(yq -r '.image.tag // empty' "$VALUES")
-                [ -n "$TAG" ] || continue
+                TAG=$(yq -r '.image.tag' "$VALUES")
+                [ -n "$TAG" ] && [ "$TAG" != "null" ] || continue
 
                 DEPLOYMENTS=$(echo "$DEPLOYMENTS" | jq \
                   --arg a "$APP" --arg c "$CLUSTER" --arg n "$NS" --arg t "$TAG" \
