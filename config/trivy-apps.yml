@@ -1,0 +1,10 @@
+apps:
+  - broadcaster-service
+  - broadcaster-module-echo
+  - broadcaster-module-queue
+  - broadcaster-module-obs
+  - demo-launcher
+  - real-time-gateway
+  - eps
+  - spring-boot-hello
+  - scheduled-tasks
