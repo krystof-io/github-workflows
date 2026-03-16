@@ -77,25 +77,47 @@ jobs:
           echo "tag=${TAG}" >> $GITHUB_OUTPUT
           echo "Scanning image: ${IMAGE_REF}"
 
-      - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@0.28.0
-        with:
-          image-ref: ${{ steps.image-ref.outputs.image_ref }}
-          format: 'table'
-          output: 'trivy-results.txt'
-          severity: ${{ inputs.severity }}
-          exit-code: ${{ inputs.fail_on_vulnerabilities && '1' || '0' }}
-          scanners: 'vuln'
+      - name: Pull Trivy image
+        run: docker pull ${{ vars.DOCKER_PROXY_HOST }}/aquasec/trivy:latest
 
-      - name: Run Trivy (SARIF output)
+      - name: Run Trivy vulnerability scanner (table)
+        id: trivy-table
+        env:
+          IMAGE_REF: ${{ steps.image-ref.outputs.image_ref }}
+          SEVERITY: ${{ inputs.severity }}
+          TRIVY_IMAGE: ${{ vars.DOCKER_PROXY_HOST }}/aquasec/trivy:latest
+          FAIL_ON_VULN: ${{ inputs.fail_on_vulnerabilities }}
+        run: |
+          set +e
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v $HOME/.docker/config.json:/root/.docker/config.json:ro \
+            "${TRIVY_IMAGE}" \
+            image --severity "${SEVERITY}" --scanners vuln \
+            --format table "${IMAGE_REF}" | tee trivy-results.txt
+          SCAN_EXIT=$?
+          set -e
+
+          if [ "$FAIL_ON_VULN" = "true" ] && [ $SCAN_EXIT -ne 0 ]; then
+            echo "::error::Trivy found vulnerabilities"
+            exit 1
+          fi
+
+      - name: Run Trivy vulnerability scanner (SARIF)
         if: always()
-        uses: aquasecurity/trivy-action@0.28.0
-        with:
-          image-ref: ${{ steps.image-ref.outputs.image_ref }}
-          format: 'sarif'
-          output: 'trivy-results.sarif'
-          severity: ${{ inputs.severity }}
-          scanners: 'vuln'
+        env:
+          IMAGE_REF: ${{ steps.image-ref.outputs.image_ref }}
+          SEVERITY: ${{ inputs.severity }}
+          TRIVY_IMAGE: ${{ vars.DOCKER_PROXY_HOST }}/aquasec/trivy:latest
+        run: |
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v $HOME/.docker/config.json:/root/.docker/config.json:ro \
+            -v $(pwd):/output \
+            "${TRIVY_IMAGE}" \
+            image --severity "${SEVERITY}" --scanners vuln \
+            --format sarif --output /output/trivy-results.sarif \
+            "${IMAGE_REF}"
 
       - name: Upload SARIF to GitHub Security tab
         if: always()
