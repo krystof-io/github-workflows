@@ -7,4 +7,3 @@ apps:
   - real-time-gateway
   - eps
   - spring-boot-hello
-  - scheduled-tasks

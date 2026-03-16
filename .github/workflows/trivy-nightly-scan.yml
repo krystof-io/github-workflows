@@ -44,19 +44,17 @@ jobs:
         run: |
           AUTH=$(echo -n "${REG_USERNAME}:${REG_PASSWORD}" | base64)
           APPS=$(yq -r '.apps[]' config/trivy-apps.yml)
-
-          # Summary header
-          {
-            echo "## Trivy Nightly Security Scan"
-            echo "**Date**: $(date -u '+%Y-%m-%d %H:%M UTC')"
-            echo ""
-            echo "| Application | Image Tag | Critical | High | Total |"
-            echo "|-------------|-----------|----------|------|-------|"
-          } >> "$GITHUB_STEP_SUMMARY"
+          APP_COUNT=$(echo "$APPS" | wc -l)
 
           DETAILS=""
+          SUMMARY_ROWS=""
           FIRST_APP=true
           TOTAL_ALL=0
+          TOTAL_CRITICAL=0
+          TOTAL_HIGH=0
+          APPS_WITH_VULNS=0
+          APPS_CLEAN=0
+          APPS_FAILED=0
 
           for APP in $APPS; do
             echo "::group::Scanning ${APP}"
@@ -68,7 +66,8 @@ jobs:
 
             if [ -z "$TAG" ] || [ "$TAG" = "null" ]; then
               echo "::warning::No tags found for ${APP}"
-              echo "| ${APP} | _no tags found_ | - | - | - |" >> "$GITHUB_STEP_SUMMARY"
+              SUMMARY_ROWS+="| :grey_question: | ${APP} | _no tags found_ | - | - | - |"$'\n'
+              APPS_FAILED=$((APPS_FAILED + 1))
               echo "::endgroup::"
               continue
             fi
@@ -100,7 +99,8 @@ jobs:
 
             if [ $SCAN_EXIT -ne 0 ] || [ ! -s "/tmp/${APP}-results.json" ]; then
               echo "::warning::Scan failed for ${APP}"
-              echo "| ${APP} | ${TAG} | _scan failed_ | - | - |" >> "$GITHUB_STEP_SUMMARY"
+              SUMMARY_ROWS+="| :x: | ${APP} | \`${TAG}\` | _scan failed_ | - | - |"$'\n'
+              APPS_FAILED=$((APPS_FAILED + 1))
               echo "::endgroup::"
               continue
             fi
@@ -110,43 +110,93 @@ jobs:
             HIGH=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="HIGH")] | length' "/tmp/${APP}-results.json")
             APP_TOTAL=$((CRITICAL + HIGH))
             TOTAL_ALL=$((TOTAL_ALL + APP_TOTAL))
+            TOTAL_CRITICAL=$((TOTAL_CRITICAL + CRITICAL))
+            TOTAL_HIGH=$((TOTAL_HIGH + HIGH))
 
-            # Add row to summary table
-            if [ "$APP_TOTAL" -gt 0 ]; then
-              echo "| **${APP}** | \`${TAG}\` | ${CRITICAL} | ${HIGH} | **${APP_TOTAL}** |" >> "$GITHUB_STEP_SUMMARY"
+            # Determine status icon and build summary row
+            if [ "$CRITICAL" -gt 0 ]; then
+              ICON=":red_circle:"
+              APPS_WITH_VULNS=$((APPS_WITH_VULNS + 1))
+              SUMMARY_ROWS+="| ${ICON} | **${APP}** | \`${TAG}\` | **${CRITICAL}** | ${HIGH} | **${APP_TOTAL}** |"$'\n'
+            elif [ "$HIGH" -gt 0 ]; then
+              ICON=":orange_circle:"
+              APPS_WITH_VULNS=$((APPS_WITH_VULNS + 1))
+              SUMMARY_ROWS+="| ${ICON} | **${APP}** | \`${TAG}\` | ${CRITICAL} | **${HIGH}** | **${APP_TOTAL}** |"$'\n'
             else
-              echo "| ${APP} | \`${TAG}\` | ${CRITICAL} | ${HIGH} | ${APP_TOTAL} |" >> "$GITHUB_STEP_SUMMARY"
+              ICON=":green_circle:"
+              APPS_CLEAN=$((APPS_CLEAN + 1))
+              SUMMARY_ROWS+="| ${ICON} | ${APP} | \`${TAG}\` | ${CRITICAL} | ${HIGH} | ${APP_TOTAL} |"$'\n'
             fi
 
-            # Build detail section for apps with vulnerabilities
+            # Build collapsible detail section for apps with vulnerabilities
             if [ "$APP_TOTAL" -gt 0 ]; then
               VULN_TABLE=$(jq -r '
                 [.Results[]?.Vulnerabilities[]? | select(.Severity=="CRITICAL" or .Severity=="HIGH")]
                 | sort_by(if .Severity == "CRITICAL" then 0 else 1 end)
                 | .[]
-                | "| \(.VulnerabilityID) | \(.Severity) | \(.PkgName) | \(.InstalledVersion) | \(.FixedVersion // "n/a") | \((.Title // "No description") | gsub("\\|"; "/") | .[:80]) |"
+                | "| \(.VulnerabilityID) | \(if .Severity == "CRITICAL" then ":red_circle: CRITICAL" else ":orange_circle: HIGH" end) | \(.PkgName) | \(.InstalledVersion) | \(.FixedVersion // "n/a") | \((.Title // "No description") | gsub("\\|"; "/") | .[:80]) |"
               ' "/tmp/${APP}-results.json")
 
-              DETAILS+=$'\n'"### ${APP} (\`${TAG}\`)"$'\n'
+              DETAILS+="<details>"$'\n'
+              DETAILS+="<summary><strong>${APP}</strong> &mdash; ${APP_TOTAL} vulnerabilities (${CRITICAL} critical, ${HIGH} high)</summary>"$'\n'
+              DETAILS+=$'\n'
               DETAILS+="| CVE | Severity | Package | Installed | Fixed | Description |"$'\n'
               DETAILS+="|-----|----------|---------|-----------|-------|-------------|"$'\n'
               DETAILS+="${VULN_TABLE}"$'\n'
+              DETAILS+=$'\n'"</details>"$'\n\n'
             fi
 
             echo "::endgroup::"
           done
 
-          # Totals row
-          echo "| | | | | **${TOTAL_ALL}** |" >> "$GITHUB_STEP_SUMMARY"
+          # Build the full summary
+          {
+            echo "# :shield: Trivy Nightly Security Scan"
+            echo ""
+            echo "> **$(date -u '+%Y-%m-%d %H:%M UTC')** | Severity filter: \`${SEVERITY}\` | **${APP_COUNT}** images scanned"
+            echo ""
 
-          # Details section
-          if [ -n "$DETAILS" ]; then
-            {
+            # Status callout
+            if [ "$TOTAL_CRITICAL" -gt 0 ]; then
+              echo "> [!CAUTION]"
+              echo "> **${TOTAL_ALL} vulnerabilities** found across **${APPS_WITH_VULNS}** of **${APP_COUNT}** applications (${TOTAL_CRITICAL} critical, ${TOTAL_HIGH} high)"
+            elif [ "$TOTAL_HIGH" -gt 0 ]; then
+              echo "> [!WARNING]"
+              echo "> **${TOTAL_ALL} vulnerabilities** found across **${APPS_WITH_VULNS}** of **${APP_COUNT}** applications (${TOTAL_HIGH} high)"
+            else
+              echo "> [!NOTE]"
+              echo "> No vulnerabilities found across **${APP_COUNT}** applications"
+            fi
+
+            echo ""
+            echo "## Overview"
+            echo ""
+            echo "| Status | Application | Image Tag | Critical | High | Total |"
+            echo "|:------:|-------------|-----------|:--------:|:----:|:-----:|"
+            echo -n "${SUMMARY_ROWS}"
+
+            if [ "$APPS_WITH_VULNS" -gt 0 ] || [ "$APPS_FAILED" -gt 0 ]; then
+              echo "| | | **Totals** | **${TOTAL_CRITICAL}** | **${TOTAL_HIGH}** | **${TOTAL_ALL}** |"
+            fi
+
+            echo ""
+
+            # Details section
+            if [ -n "$DETAILS" ]; then
+              echo "## Vulnerability Details"
               echo ""
-              echo "---"
               echo "${DETAILS}"
-            } >> "$GITHUB_STEP_SUMMARY"
-          fi
+            fi
+
+            # Legend
+            echo "---"
+            echo ""
+            echo "<sub>"
+            echo ""
+            echo ":green_circle: No vulnerabilities &nbsp; :orange_circle: High severity &nbsp; :red_circle: Critical severity &nbsp; :grey_question: No image found &nbsp; :x: Scan failed"
+            echo ""
+            echo "</sub>"
+          } >> "$GITHUB_STEP_SUMMARY"
 
           echo ""
           echo "Scan complete. Total vulnerabilities found: ${TOTAL_ALL}"
