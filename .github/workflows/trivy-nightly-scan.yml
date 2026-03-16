@@ -9,8 +9,27 @@ permissions:
   contents: read
 
 jobs:
+  discover-clusters:
+    name: Discover Clusters
+    runs-on: arc-runners-javadev
+    outputs:
+      matrix: ${{ steps.clusters.outputs.matrix }}
+    steps:
+      - name: Checkout config
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 #v5
+        with:
+          sparse-checkout: config
+          sparse-checkout-cone-mode: true
+
+      - name: Build cluster matrix
+        id: clusters
+        run: |
+          MATRIX=$(yq -o=json '[.clusters | to_entries[] | {"name": .key, "cluster_url": .value.cluster_url}]' config/clusters.yml | jq -c)
+          echo "matrix={\"include\":${MATRIX}}" >> $GITHUB_OUTPUT
+          echo "Clusters: ${MATRIX}"
+
   scan:
-    name: Scan Container Images
+    name: Scan Application Images
     runs-on: arc-runners-javadev
     steps:
       - name: Checkout config
@@ -279,3 +298,206 @@ jobs:
 
           echo ""
           echo "Scan complete. ${DEPLOY_COUNT} deployments scanned, ${TOTAL_ALL} vulnerabilities found."
+
+  cluster-scan:
+    name: Cluster Images (${{ matrix.name }})
+    needs: discover-clusters
+    runs-on: arc-runners-javadev
+    strategy:
+      matrix: ${{ fromJson(needs.discover-clusters.outputs.matrix) }}
+    steps:
+      - name: Login to container registry
+        uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef #v3.6.0
+        with:
+          registry: ${{ vars.IMAGE_REGISTRY_HOST }}
+          username: ${{ secrets.IMAGE_REGISTRY_USERNAME }}
+          password: ${{ secrets.IMAGE_REGISTRY_PASSWORD }}
+
+      - name: Pull Trivy image
+        run: docker pull ${{ vars.DOCKER_PROXY_HOST }}/aquasec/trivy:latest
+
+      - name: Create Trivy cache directory
+        run: mkdir -p ${{ runner.temp }}/trivy-cache
+
+      - name: Setup kubectl
+        env:
+          CA_CERT: ${{ secrets[format('K8S_CLUSTER_CA_CERT_FOR_{0}_CLUSTER', matrix.name)] }}
+          SA_TOKEN: ${{ secrets[format('SERVICE_ACCOUNT_TOKEN_FOR_{0}_CLUSTER_CICD_K8S_ACCESS', matrix.name)] }}
+          CLUSTER_URL: ${{ matrix.cluster_url }}
+          CLUSTER_NAME: ${{ matrix.name }}
+        run: |
+          echo "$CA_CERT" | base64 -d > /tmp/ca.crt
+          kubectl config set-cluster "${CLUSTER_NAME}" \
+            --server="${CLUSTER_URL}" \
+            --certificate-authority=/tmp/ca.crt
+          kubectl config set-credentials cicd --token="${SA_TOKEN}"
+          kubectl config set-context "${CLUSTER_NAME}" \
+            --cluster="${CLUSTER_NAME}" \
+            --user=cicd
+          kubectl config use-context "${CLUSTER_NAME}"
+          kubectl cluster-info
+
+      - name: Discover and scan third-party images
+        env:
+          REGISTRY: ${{ vars.IMAGE_REGISTRY_HOST }}
+          TRIVY_IMAGE: ${{ vars.DOCKER_PROXY_HOST }}/aquasec/trivy:latest
+          TRIVY_CACHE: ${{ runner.temp }}/trivy-cache
+          GHCR_PROXY: ${{ vars.GHCR_PROXY_HOST }}
+          SEVERITY: CRITICAL,HIGH
+          CLUSTER_NAME: ${{ matrix.name }}
+        run: |
+          # Get all unique images from running pods (containers + init containers)
+          ALL_IMAGES=$(kubectl get pods --all-namespaces \
+            -o jsonpath='{range .items[*]}{range .spec.containers[*]}{.image}{"\n"}{end}{range .spec.initContainers[*]}{.image}{"\n"}{end}{end}' \
+            | sort -u | grep -v '^$')
+
+          ALL_COUNT=$(echo "$ALL_IMAGES" | wc -l)
+          echo "Found ${ALL_COUNT} unique images in ${CLUSTER_NAME} cluster"
+
+          # Filter out our app images (scanned in the app-scan job)
+          THIRD_PARTY=$(echo "$ALL_IMAGES" | grep -v "krystof-io/" || true)
+          IMAGE_COUNT=$(echo "$THIRD_PARTY" | grep -c . || echo "0")
+          echo "Third-party images to scan: ${IMAGE_COUNT} (excluded $(( ALL_COUNT - IMAGE_COUNT )) app images)"
+
+          if [ "$IMAGE_COUNT" -eq 0 ]; then
+            echo "> [!NOTE]" >> "$GITHUB_STEP_SUMMARY"
+            echo "> No third-party images found in **${CLUSTER_NAME}** cluster." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          # Scan each image
+          FIRST_SCAN=true
+          SUMMARY_ROWS=""
+          DETAILS=""
+          TOTAL_ALL=0
+          TOTAL_CRITICAL=0
+          TOTAL_HIGH=0
+          IMAGES_WITH_VULNS=0
+          IMAGES_CLEAN=0
+          IMAGES_FAILED=0
+
+          while IFS= read -r IMAGE_REF; do
+            [ -n "$IMAGE_REF" ] || continue
+            SAFE_KEY=$(echo "$IMAGE_REF" | tr -c 'a-zA-Z0-9_-' '_')
+
+            # Clean display name: strip registry prefix, keep image:tag
+            DISPLAY_NAME=$(echo "$IMAGE_REF" | sed 's|^[^/]*\.[^/]*/||; s|^library/||')
+
+            echo "::group::Scanning ${IMAGE_REF}"
+
+            SKIP_FLAGS=""
+            if [ "$FIRST_SCAN" = "false" ]; then
+              SKIP_FLAGS="--skip-db-update --skip-java-db-update"
+            fi
+            FIRST_SCAN=false
+
+            set +e
+            docker run --rm \
+              -v /var/run/docker.sock:/var/run/docker.sock \
+              -v "$HOME/.docker/config.json":/root/.docker/config.json:ro \
+              -v "${TRIVY_CACHE}":/root/.cache/trivy \
+              -e TRIVY_DB_REPOSITORY="${GHCR_PROXY}/aquasecurity/trivy-db" \
+              -e TRIVY_JAVA_DB_REPOSITORY="${GHCR_PROXY}/aquasecurity/trivy-java-db" \
+              "${TRIVY_IMAGE}" \
+              image --severity "${SEVERITY}" --scanners vuln \
+              ${SKIP_FLAGS} \
+              --format json "${IMAGE_REF}" > "/tmp/scan-${SAFE_KEY}.json" 2>/dev/null
+            SCAN_EXIT=$?
+            set -e
+
+            echo "::endgroup::"
+
+            if [ $SCAN_EXIT -ne 0 ] || [ ! -s "/tmp/scan-${SAFE_KEY}.json" ]; then
+              SUMMARY_ROWS+="| :x: | ${DISPLAY_NAME} | _scan failed_ | - | - |"$'\n'
+              IMAGES_FAILED=$((IMAGES_FAILED + 1))
+              continue
+            fi
+
+            CRITICAL=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="CRITICAL")] | length' "/tmp/scan-${SAFE_KEY}.json")
+            HIGH=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="HIGH")] | length' "/tmp/scan-${SAFE_KEY}.json")
+            IMG_TOTAL=$((CRITICAL + HIGH))
+            TOTAL_ALL=$((TOTAL_ALL + IMG_TOTAL))
+            TOTAL_CRITICAL=$((TOTAL_CRITICAL + CRITICAL))
+            TOTAL_HIGH=$((TOTAL_HIGH + HIGH))
+
+            if [ "$CRITICAL" -gt 0 ]; then
+              ICON=":red_circle:"
+              IMAGES_WITH_VULNS=$((IMAGES_WITH_VULNS + 1))
+              SUMMARY_ROWS+="| ${ICON} | **${DISPLAY_NAME}** | **${CRITICAL}** | ${HIGH} | **${IMG_TOTAL}** |"$'\n'
+            elif [ "$HIGH" -gt 0 ]; then
+              ICON=":orange_circle:"
+              IMAGES_WITH_VULNS=$((IMAGES_WITH_VULNS + 1))
+              SUMMARY_ROWS+="| ${ICON} | **${DISPLAY_NAME}** | ${CRITICAL} | **${HIGH}** | **${IMG_TOTAL}** |"$'\n'
+            else
+              ICON=":green_circle:"
+              IMAGES_CLEAN=$((IMAGES_CLEAN + 1))
+              SUMMARY_ROWS+="| ${ICON} | ${DISPLAY_NAME} | ${CRITICAL} | ${HIGH} | ${IMG_TOTAL} |"$'\n'
+            fi
+
+            # Collapsible detail section
+            if [ "$IMG_TOTAL" -gt 0 ]; then
+              VULN_TABLE=$(jq -r '
+                [.Results[]?.Vulnerabilities[]? | select(.Severity=="CRITICAL" or .Severity=="HIGH")]
+                | sort_by(if .Severity == "CRITICAL" then 0 else 1 end)
+                | .[]
+                | "| \(.VulnerabilityID) | \(if .Severity == "CRITICAL" then ":red_circle: CRITICAL" else ":orange_circle: HIGH" end) | \(.PkgName) | \(.InstalledVersion) | \(.FixedVersion // "n/a") | \((.Title // "No description") | gsub("\\|"; "/") | .[:80]) |"
+              ' "/tmp/scan-${SAFE_KEY}.json")
+
+              DETAILS+="<details>"$'\n'
+              DETAILS+="<summary><strong>${DISPLAY_NAME}</strong> &mdash; ${IMG_TOTAL} vulnerabilities (${CRITICAL} critical, ${HIGH} high)</summary>"$'\n'
+              DETAILS+=$'\n'
+              DETAILS+="| CVE | Severity | Package | Installed | Fixed | Description |"$'\n'
+              DETAILS+="|-----|----------|---------|-----------|-------|-------------|"$'\n'
+              DETAILS+="${VULN_TABLE}"$'\n'
+              DETAILS+=$'\n'"</details>"$'\n\n'
+            fi
+          done <<< "$THIRD_PARTY"
+
+          # Write summary
+          {
+            echo "# :package: Third-Party Image Scan: ${CLUSTER_NAME} cluster"
+            echo ""
+            echo "> **$(date -u '+%Y-%m-%d %H:%M UTC')** | Severity: \`${SEVERITY}\` | **${IMAGE_COUNT}** third-party images"
+            echo ""
+
+            if [ "$TOTAL_CRITICAL" -gt 0 ]; then
+              echo "> [!CAUTION]"
+              echo "> **${TOTAL_ALL} vulnerabilities** across **${IMAGES_WITH_VULNS}** of **${IMAGE_COUNT}** images (${TOTAL_CRITICAL} critical, ${TOTAL_HIGH} high)"
+            elif [ "$TOTAL_HIGH" -gt 0 ]; then
+              echo "> [!WARNING]"
+              echo "> **${TOTAL_ALL} vulnerabilities** across **${IMAGES_WITH_VULNS}** of **${IMAGE_COUNT}** images (${TOTAL_HIGH} high)"
+            else
+              echo "> [!NOTE]"
+              echo "> No vulnerabilities found across **${IMAGE_COUNT}** third-party images"
+            fi
+
+            echo ""
+            echo "## Overview"
+            echo ""
+            echo "| Status | Image | Critical | High | Total |"
+            echo "|:------:|-------|:--------:|:----:|:-----:|"
+            echo -n "${SUMMARY_ROWS}"
+
+            if [ "$IMAGES_WITH_VULNS" -gt 0 ] || [ "$IMAGES_FAILED" -gt 0 ]; then
+              echo "| | **Totals** | **${TOTAL_CRITICAL}** | **${TOTAL_HIGH}** | **${TOTAL_ALL}** |"
+            fi
+
+            echo ""
+
+            if [ -n "$DETAILS" ]; then
+              echo "## Vulnerability Details"
+              echo ""
+              echo "${DETAILS}"
+            fi
+
+            echo "---"
+            echo ""
+            echo "<sub>"
+            echo ""
+            echo ":green_circle: No vulnerabilities &nbsp; :orange_circle: High severity &nbsp; :red_circle: Critical severity &nbsp; :x: Scan failed"
+            echo ""
+            echo "</sub>"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo ""
+          echo "Cluster scan complete. ${IMAGE_COUNT} images scanned, ${TOTAL_ALL} vulnerabilities found."
