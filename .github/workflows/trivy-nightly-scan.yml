@@ -335,7 +335,14 @@ jobs:
             --cluster="${CLUSTER_NAME}" \
             --user=cicd
           kubectl config use-context "${CLUSTER_NAME}"
-          kubectl cluster-info
+
+          # Verify we have the only permission we need: list pods cluster-wide
+          if ! kubectl auth can-i list pods --all-namespaces; then
+            echo "::error::Service account cicd-k8s-access needs cluster-wide 'list pods' permission"
+            echo "Minimum ClusterRole needed: apiGroups [''], resources ['pods'], verbs ['list']"
+            exit 1
+          fi
+          echo "Cluster connection verified"
 
       - name: Discover and scan third-party images
         env:
