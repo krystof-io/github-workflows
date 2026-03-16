@@ -32,57 +32,96 @@ jobs:
       - name: Create Trivy cache directory
         run: mkdir -p ${{ runner.temp }}/trivy-cache
 
-      - name: Scan all application images
+      - name: Discover deployed images from GitOps repos
+        env:
+          CICD_TOKEN: ${{ secrets.CICD_TOKEN }}
+        run: |
+          CLUSTERS=$(yq -r '.clusters | keys[]' config/clusters.yml)
+          APPS=$(yq -r '.apps[]' config/trivy-apps.yml)
+
+          # Clone each GitOps repo
+          for CLUSTER in $CLUSTERS; do
+            REPO=$(yq -r ".clusters.${CLUSTER}.gitops_repo" config/clusters.yml)
+            echo "Cloning ${REPO}..."
+            git clone --depth 1 --quiet \
+              "https://x-access-token:${CICD_TOKEN}@github.com/${REPO}.git" \
+              "/tmp/gitops-${CLUSTER}"
+          done
+
+          # Walk clusters/namespaces to find deployed image tags
+          DEPLOYMENTS="[]"
+
+          for CLUSTER in $CLUSTERS; do
+            CLUSTER_PATH=$(yq -r ".clusters.${CLUSTER}.cluster_path" config/clusters.yml)
+            WORKLOADS="/tmp/gitops-${CLUSTER}/${CLUSTER_PATH}"
+
+            [ -d "$WORKLOADS" ] || continue
+
+            for NS_DIR in "$WORKLOADS"/*/; do
+              [ -d "$NS_DIR" ] || continue
+              NS=$(basename "$NS_DIR")
+
+              for APP in $APPS; do
+                VALUES="${NS_DIR}${APP}/${APP}-values.yaml"
+                [ -f "$VALUES" ] || continue
+
+                TAG=$(yq -r '.image.tag // empty' "$VALUES")
+                [ -n "$TAG" ] || continue
+
+                DEPLOYMENTS=$(echo "$DEPLOYMENTS" | jq \
+                  --arg a "$APP" --arg c "$CLUSTER" --arg n "$NS" --arg t "$TAG" \
+                  '. + [{"app":$a,"cluster":$c,"namespace":$n,"tag":$t}]')
+              done
+            done
+          done
+
+          echo "$DEPLOYMENTS" > /tmp/deployments.json
+          DEPLOY_COUNT=$(echo "$DEPLOYMENTS" | jq length)
+          echo "Found ${DEPLOY_COUNT} deployments:"
+          echo "$DEPLOYMENTS" | jq -r '.[] | "  \(.app) → \(.cluster)/\(.namespace) @ \(.tag)"'
+
+          # Clean up cloned repos (contain access tokens in git config)
+          rm -rf /tmp/gitops-*
+
+      - name: Scan images and produce report
         env:
           REGISTRY: ${{ vars.IMAGE_REGISTRY_HOST }}
-          REG_USERNAME: ${{ secrets.IMAGE_REGISTRY_USERNAME }}
-          REG_PASSWORD: ${{ secrets.IMAGE_REGISTRY_PASSWORD }}
           TRIVY_IMAGE: ${{ vars.DOCKER_PROXY_HOST }}/aquasec/trivy:latest
           TRIVY_CACHE: ${{ runner.temp }}/trivy-cache
           GHCR_PROXY: ${{ vars.GHCR_PROXY_HOST }}
           SEVERITY: CRITICAL,HIGH
         run: |
-          AUTH=$(echo -n "${REG_USERNAME}:${REG_PASSWORD}" | base64)
-          APPS=$(yq -r '.apps[]' config/trivy-apps.yml)
-          APP_COUNT=$(echo "$APPS" | wc -l)
+          DEPLOYMENTS=$(cat /tmp/deployments.json)
+          DEPLOY_COUNT=$(echo "$DEPLOYMENTS" | jq length)
 
-          DETAILS=""
-          SUMMARY_ROWS=""
-          FIRST_APP=true
-          TOTAL_ALL=0
-          TOTAL_CRITICAL=0
-          TOTAL_HIGH=0
-          APPS_WITH_VULNS=0
-          APPS_CLEAN=0
-          APPS_FAILED=0
+          if [ "$DEPLOY_COUNT" -eq 0 ]; then
+            echo "No deployments found."
+            echo "> [!NOTE]" >> "$GITHUB_STEP_SUMMARY"
+            echo "> No deployed images found to scan." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
 
-          for APP in $APPS; do
-            echo "::group::Scanning ${APP}"
+          # Get unique app:tag pairs to avoid scanning the same image twice
+          echo "$DEPLOYMENTS" | jq -c '[.[] | {app,tag}] | unique | .[]' > /tmp/unique-images.jsonl
+          UNIQUE_COUNT=$(wc -l < /tmp/unique-images.jsonl)
+          echo "Scanning ${UNIQUE_COUNT} unique images across ${DEPLOY_COUNT} deployments"
 
-            # Discover latest tag
-            RESPONSE=$(curl -sf -H "Authorization: Basic ${AUTH}" \
-              "https://${REGISTRY}/v2/krystof-io/${APP}/tags/list" 2>/dev/null) || true
-            TAG=$(echo "$RESPONSE" | jq -r '.tags[]' 2>/dev/null | sort -V | tail -1)
-
-            if [ -z "$TAG" ] || [ "$TAG" = "null" ]; then
-              echo "::warning::No tags found for ${APP}"
-              SUMMARY_ROWS+="| :grey_question: | ${APP} | _no tags found_ | - | - | - |"$'\n'
-              APPS_FAILED=$((APPS_FAILED + 1))
-              echo "::endgroup::"
-              continue
-            fi
-
+          # Scan each unique image
+          FIRST_SCAN=true
+          while read -r ENTRY; do
+            APP=$(echo "$ENTRY" | jq -r '.app')
+            TAG=$(echo "$ENTRY" | jq -r '.tag')
+            SAFE_KEY=$(echo "${APP}_${TAG}" | tr -c 'a-zA-Z0-9_-' '_')
             IMAGE_REF="${REGISTRY}/krystof-io/${APP}:${TAG}"
-            echo "Scanning ${IMAGE_REF}"
 
-            # Skip DB download after first app (cache is warm)
+            echo "::group::Scanning ${APP}:${TAG}"
+
             SKIP_FLAGS=""
-            if [ "$FIRST_APP" = "false" ]; then
+            if [ "$FIRST_SCAN" = "false" ]; then
               SKIP_FLAGS="--skip-db-update --skip-java-db-update"
             fi
-            FIRST_APP=false
+            FIRST_SCAN=false
 
-            # Run Trivy with JSON output
             set +e
             docker run --rm \
               -v /var/run/docker.sock:/var/run/docker.sock \
@@ -93,110 +132,142 @@ jobs:
               "${TRIVY_IMAGE}" \
               image --severity "${SEVERITY}" --scanners vuln \
               ${SKIP_FLAGS} \
-              --format json "${IMAGE_REF}" > "/tmp/${APP}-results.json"
+              --format json "${IMAGE_REF}" > "/tmp/scan-${SAFE_KEY}.json"
             SCAN_EXIT=$?
             set -e
 
-            if [ $SCAN_EXIT -ne 0 ] || [ ! -s "/tmp/${APP}-results.json" ]; then
-              echo "::warning::Scan failed for ${APP}"
-              SUMMARY_ROWS+="| :x: | ${APP} | \`${TAG}\` | _scan failed_ | - | - |"$'\n'
-              APPS_FAILED=$((APPS_FAILED + 1))
-              echo "::endgroup::"
+            if [ $SCAN_EXIT -ne 0 ] || [ ! -s "/tmp/scan-${SAFE_KEY}.json" ]; then
+              echo "::warning::Scan failed for ${APP}:${TAG}"
+              echo '{"Results":[]}' > "/tmp/scan-${SAFE_KEY}.json"
+              echo "FAILED" > "/tmp/scan-${SAFE_KEY}.status"
+            fi
+
+            echo "::endgroup::"
+          done < /tmp/unique-images.jsonl
+
+          # Build the report from deployments + scan results
+          SUMMARY_ROWS=""
+          DETAILS=""
+          TOTAL_ALL=0
+          TOTAL_CRITICAL=0
+          TOTAL_HIGH=0
+          DEPLOYMENTS_WITH_VULNS=0
+          DEPLOYMENTS_CLEAN=0
+          DEPLOYMENTS_FAILED=0
+          # Track which app:tag combos already have detail sections
+          DETAILED_KEYS=""
+
+          # Sort deployments: critical first, then high, then clean
+          # Process each deployment row
+          echo "$DEPLOYMENTS" | jq -c '.[]' > /tmp/deploy-rows.jsonl
+          while read -r ROW; do
+            APP=$(echo "$ROW" | jq -r '.app')
+            CLUSTER=$(echo "$ROW" | jq -r '.cluster')
+            NS=$(echo "$ROW" | jq -r '.namespace')
+            TAG=$(echo "$ROW" | jq -r '.tag')
+            SAFE_KEY=$(echo "${APP}_${TAG}" | tr -c 'a-zA-Z0-9_-' '_')
+            ENV_LABEL="${CLUSTER}/${NS}"
+            SCAN_FILE="/tmp/scan-${SAFE_KEY}.json"
+
+            # Check for scan failure
+            if [ -f "/tmp/scan-${SAFE_KEY}.status" ]; then
+              SUMMARY_ROWS+="| :x: | ${APP} | ${ENV_LABEL} | \`${TAG}\` | _scan failed_ | - | - |"$'\n'
+              DEPLOYMENTS_FAILED=$((DEPLOYMENTS_FAILED + 1))
               continue
             fi
 
-            # Count vulnerabilities by severity
-            CRITICAL=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="CRITICAL")] | length' "/tmp/${APP}-results.json")
-            HIGH=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="HIGH")] | length' "/tmp/${APP}-results.json")
+            # Count vulnerabilities
+            CRITICAL=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="CRITICAL")] | length' "$SCAN_FILE")
+            HIGH=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="HIGH")] | length' "$SCAN_FILE")
             APP_TOTAL=$((CRITICAL + HIGH))
             TOTAL_ALL=$((TOTAL_ALL + APP_TOTAL))
             TOTAL_CRITICAL=$((TOTAL_CRITICAL + CRITICAL))
             TOTAL_HIGH=$((TOTAL_HIGH + HIGH))
 
-            # Determine status icon and build summary row
+            # Status icon and summary row
             if [ "$CRITICAL" -gt 0 ]; then
               ICON=":red_circle:"
-              APPS_WITH_VULNS=$((APPS_WITH_VULNS + 1))
-              SUMMARY_ROWS+="| ${ICON} | **${APP}** | \`${TAG}\` | **${CRITICAL}** | ${HIGH} | **${APP_TOTAL}** |"$'\n'
+              DEPLOYMENTS_WITH_VULNS=$((DEPLOYMENTS_WITH_VULNS + 1))
+              SUMMARY_ROWS+="| ${ICON} | **${APP}** | **${ENV_LABEL}** | \`${TAG}\` | **${CRITICAL}** | ${HIGH} | **${APP_TOTAL}** |"$'\n'
             elif [ "$HIGH" -gt 0 ]; then
               ICON=":orange_circle:"
-              APPS_WITH_VULNS=$((APPS_WITH_VULNS + 1))
-              SUMMARY_ROWS+="| ${ICON} | **${APP}** | \`${TAG}\` | ${CRITICAL} | **${HIGH}** | **${APP_TOTAL}** |"$'\n'
+              DEPLOYMENTS_WITH_VULNS=$((DEPLOYMENTS_WITH_VULNS + 1))
+              SUMMARY_ROWS+="| ${ICON} | **${APP}** | **${ENV_LABEL}** | \`${TAG}\` | ${CRITICAL} | **${HIGH}** | **${APP_TOTAL}** |"$'\n'
             else
               ICON=":green_circle:"
-              APPS_CLEAN=$((APPS_CLEAN + 1))
-              SUMMARY_ROWS+="| ${ICON} | ${APP} | \`${TAG}\` | ${CRITICAL} | ${HIGH} | ${APP_TOTAL} |"$'\n'
+              DEPLOYMENTS_CLEAN=$((DEPLOYMENTS_CLEAN + 1))
+              SUMMARY_ROWS+="| ${ICON} | ${APP} | ${ENV_LABEL} | \`${TAG}\` | ${CRITICAL} | ${HIGH} | ${APP_TOTAL} |"$'\n'
             fi
 
-            # Build collapsible detail section for apps with vulnerabilities
-            if [ "$APP_TOTAL" -gt 0 ]; then
+            # Build detail section (once per unique app:tag)
+            if [ "$APP_TOTAL" -gt 0 ] && [[ ! "$DETAILED_KEYS" =~ "|${SAFE_KEY}|" ]]; then
+              DETAILED_KEYS+="|${SAFE_KEY}|"
+
               VULN_TABLE=$(jq -r '
                 [.Results[]?.Vulnerabilities[]? | select(.Severity=="CRITICAL" or .Severity=="HIGH")]
                 | sort_by(if .Severity == "CRITICAL" then 0 else 1 end)
                 | .[]
                 | "| \(.VulnerabilityID) | \(if .Severity == "CRITICAL" then ":red_circle: CRITICAL" else ":orange_circle: HIGH" end) | \(.PkgName) | \(.InstalledVersion) | \(.FixedVersion // "n/a") | \((.Title // "No description") | gsub("\\|"; "/") | .[:80]) |"
-              ' "/tmp/${APP}-results.json")
+              ' "$SCAN_FILE")
 
               DETAILS+="<details>"$'\n'
-              DETAILS+="<summary><strong>${APP}</strong> &mdash; ${APP_TOTAL} vulnerabilities (${CRITICAL} critical, ${HIGH} high)</summary>"$'\n'
+              DETAILS+="<summary><strong>${APP}</strong> <code>${TAG}</code> &mdash; ${APP_TOTAL} vulnerabilities (${CRITICAL} critical, ${HIGH} high)</summary>"$'\n'
               DETAILS+=$'\n'
               DETAILS+="| CVE | Severity | Package | Installed | Fixed | Description |"$'\n'
               DETAILS+="|-----|----------|---------|-----------|-------|-------------|"$'\n'
               DETAILS+="${VULN_TABLE}"$'\n'
               DETAILS+=$'\n'"</details>"$'\n\n'
             fi
+          done < /tmp/deploy-rows.jsonl
 
-            echo "::endgroup::"
-          done
+          # Unique app count for the header
+          APP_COUNT=$(echo "$DEPLOYMENTS" | jq '[.[].app] | unique | length')
 
-          # Build the full summary
+          # Write the full summary
           {
             echo "# :shield: Trivy Nightly Security Scan"
             echo ""
-            echo "> **$(date -u '+%Y-%m-%d %H:%M UTC')** | Severity filter: \`${SEVERITY}\` | **${APP_COUNT}** images scanned"
+            echo "> **$(date -u '+%Y-%m-%d %H:%M UTC')** | Severity: \`${SEVERITY}\` | **${DEPLOY_COUNT}** deployments across **${APP_COUNT}** applications"
             echo ""
 
-            # Status callout
             if [ "$TOTAL_CRITICAL" -gt 0 ]; then
               echo "> [!CAUTION]"
-              echo "> **${TOTAL_ALL} vulnerabilities** found across **${APPS_WITH_VULNS}** of **${APP_COUNT}** applications (${TOTAL_CRITICAL} critical, ${TOTAL_HIGH} high)"
+              echo "> **${TOTAL_ALL} vulnerabilities** across **${DEPLOYMENTS_WITH_VULNS}** of **${DEPLOY_COUNT}** deployments (${TOTAL_CRITICAL} critical, ${TOTAL_HIGH} high)"
             elif [ "$TOTAL_HIGH" -gt 0 ]; then
               echo "> [!WARNING]"
-              echo "> **${TOTAL_ALL} vulnerabilities** found across **${APPS_WITH_VULNS}** of **${APP_COUNT}** applications (${TOTAL_HIGH} high)"
+              echo "> **${TOTAL_ALL} vulnerabilities** across **${DEPLOYMENTS_WITH_VULNS}** of **${DEPLOY_COUNT}** deployments (${TOTAL_HIGH} high)"
             else
               echo "> [!NOTE]"
-              echo "> No vulnerabilities found across **${APP_COUNT}** applications"
+              echo "> No vulnerabilities found across **${DEPLOY_COUNT}** deployments"
             fi
 
             echo ""
             echo "## Overview"
             echo ""
-            echo "| Status | Application | Image Tag | Critical | High | Total |"
-            echo "|:------:|-------------|-----------|:--------:|:----:|:-----:|"
+            echo "| Status | Application | Environment | Image Tag | Critical | High | Total |"
+            echo "|:------:|-------------|-------------|-----------|:--------:|:----:|:-----:|"
             echo -n "${SUMMARY_ROWS}"
 
-            if [ "$APPS_WITH_VULNS" -gt 0 ] || [ "$APPS_FAILED" -gt 0 ]; then
-              echo "| | | **Totals** | **${TOTAL_CRITICAL}** | **${TOTAL_HIGH}** | **${TOTAL_ALL}** |"
+            if [ "$DEPLOYMENTS_WITH_VULNS" -gt 0 ] || [ "$DEPLOYMENTS_FAILED" -gt 0 ]; then
+              echo "| | | | **Totals** | **${TOTAL_CRITICAL}** | **${TOTAL_HIGH}** | **${TOTAL_ALL}** |"
             fi
 
             echo ""
 
-            # Details section
             if [ -n "$DETAILS" ]; then
               echo "## Vulnerability Details"
               echo ""
               echo "${DETAILS}"
             fi
 
-            # Legend
             echo "---"
             echo ""
             echo "<sub>"
             echo ""
-            echo ":green_circle: No vulnerabilities &nbsp; :orange_circle: High severity &nbsp; :red_circle: Critical severity &nbsp; :grey_question: No image found &nbsp; :x: Scan failed"
+            echo ":green_circle: No vulnerabilities &nbsp; :orange_circle: High severity &nbsp; :red_circle: Critical severity &nbsp; :x: Scan failed"
             echo ""
             echo "</sub>"
           } >> "$GITHUB_STEP_SUMMARY"
 
           echo ""
-          echo "Scan complete. Total vulnerabilities found: ${TOTAL_ALL}"
+          echo "Scan complete. ${DEPLOY_COUNT} deployments scanned, ${TOTAL_ALL} vulnerabilities found."
