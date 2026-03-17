@@ -1,9 +1,7 @@
 name: Nightly Trivy Security Scan
 
 on:
-  schedule:
-    - cron: '0 4 * * *'
-  workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
@@ -18,6 +16,7 @@ jobs:
       - name: Checkout config
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 #v5
         with:
+          repository: krystof-io/github-workflows
           sparse-checkout: config
           sparse-checkout-cone-mode: true
 
@@ -35,6 +34,7 @@ jobs:
       - name: Checkout config
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 #v5
         with:
+          repository: krystof-io/github-workflows
           sparse-checkout: config
           sparse-checkout-cone-mode: true
 
@@ -603,6 +603,7 @@ jobs:
       - name: Checkout config
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 #v5
         with:
+          repository: krystof-io/github-workflows
           sparse-checkout: config
           sparse-checkout-cone-mode: true
 
