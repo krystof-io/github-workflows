@@ -24,7 +24,7 @@ jobs:
       - name: Build cluster matrix
         id: clusters
         run: |
-          MATRIX=$(yq -o=json '[.clusters | to_entries[] | {"name": .key, "cluster_url": .value.cluster_url}]' config/clusters.yml | jq -c)
+          MATRIX=$(yq -o=json '[.clusters | to_entries[] | {"name": .key, "cluster_url": .value.cluster_url, "gitops_repo": .value.gitops_repo}]' config/clusters.yml | jq -c)
           echo "matrix={\"include\":${MATRIX}}" >> $GITHUB_OUTPUT
           echo "Clusters: ${MATRIX}"
 
@@ -247,6 +247,29 @@ jobs:
             fi
           done < /tmp/deploy-rows.jsonl
 
+          # Build upgrade recommendations from all scan results
+          UPGRADES=""
+          for SCAN_FILE in /tmp/scan-*.json; do
+            [ -f "$SCAN_FILE" ] || continue
+            UPGRADES+=$(jq -r '
+              [.Results[]?.Vulnerabilities[]? | select(.Severity=="CRITICAL" or .Severity=="HIGH") | select(.FixedVersion != null and .FixedVersion != "")]
+              | group_by(.PkgName)
+              | map({
+                  package: .[0].PkgName,
+                  current: .[0].InstalledVersion,
+                  fix: ([.[].FixedVersion | split(", ")[] ] | unique | join(", ")),
+                  critical: ([.[] | select(.Severity=="CRITICAL")] | length),
+                  high: ([.[] | select(.Severity=="HIGH")] | length),
+                  total: length
+                })
+              | sort_by(-.critical, -.total)
+              | .[]
+              | "| \(.package) | \(.current) | \(.fix) | \(.total) (\(.critical) critical, \(.high) high) |"
+            ' "$SCAN_FILE" 2>/dev/null)$'\n'
+          done
+          # Deduplicate across scan files
+          UPGRADES=$(echo "$UPGRADES" | sort -u | grep -v '^$')
+
           # Unique app count for the header
           APP_COUNT=$(echo "$DEPLOYMENTS" | jq '[.[].app] | unique | length')
 
@@ -280,6 +303,17 @@ jobs:
             fi
 
             echo ""
+
+            if [ -n "$UPGRADES" ]; then
+              echo "## Recommended Upgrades"
+              echo ""
+              echo "Packages with available fixes for critical/high CVEs:"
+              echo ""
+              echo "| Package | Current | Upgrade To | Fixes |"
+              echo "|---------|---------|------------|-------|"
+              echo "$UPGRADES"
+              echo ""
+            fi
 
             if [ -n "$DETAILS" ]; then
               echo "## Vulnerability Details"
@@ -476,6 +510,29 @@ jobs:
             fi
           done < /tmp/third-party-images.jsonl
 
+          # Build upgrade recommendations from all scan results
+          UPGRADES=""
+          for SCAN_FILE in /tmp/scan-*.json; do
+            [ -f "$SCAN_FILE" ] || continue
+            UPGRADES+=$(jq -r '
+              [.Results[]?.Vulnerabilities[]? | select(.Severity=="CRITICAL" or .Severity=="HIGH") | select(.FixedVersion != null and .FixedVersion != "")]
+              | group_by(.PkgName)
+              | map({
+                  package: .[0].PkgName,
+                  current: .[0].InstalledVersion,
+                  fix: ([.[].FixedVersion | split(", ")[] ] | unique | join(", ")),
+                  critical: ([.[] | select(.Severity=="CRITICAL")] | length),
+                  high: ([.[] | select(.Severity=="HIGH")] | length),
+                  total: length
+                })
+              | sort_by(-.critical, -.total)
+              | .[]
+              | "| \(.package) | \(.current) | \(.fix) | \(.total) (\(.critical) critical, \(.high) high) |"
+            ' "$SCAN_FILE" 2>/dev/null)$'\n'
+          done
+          # Deduplicate across scan files
+          UPGRADES=$(echo "$UPGRADES" | sort -u | grep -v '^$')
+
           # Write summary
           {
             echo "# :package: Third-Party Image Scan: ${CLUSTER_NAME} cluster"
@@ -507,6 +564,17 @@ jobs:
 
             echo ""
 
+            if [ -n "$UPGRADES" ]; then
+              echo "## Recommended Upgrades"
+              echo ""
+              echo "Packages with available fixes for critical/high CVEs:"
+              echo ""
+              echo "| Package | Current | Upgrade To | Fixes |"
+              echo "|---------|---------|------------|-------|"
+              echo "$UPGRADES"
+              echo ""
+            fi
+
             if [ -n "$DETAILS" ]; then
               echo "## Vulnerability Details"
               echo ""
@@ -524,3 +592,182 @@ jobs:
 
           echo ""
           echo "Cluster scan complete. ${IMAGE_COUNT} images scanned, ${TOTAL_ALL} vulnerabilities found."
+
+  helm-freshness:
+    name: Helm Chart Freshness (${{ matrix.name }})
+    needs: discover-clusters
+    runs-on: arc-runners-javadev
+    strategy:
+      matrix: ${{ fromJson(needs.discover-clusters.outputs.matrix) }}
+    steps:
+      - name: Checkout config
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 #v5
+        with:
+          sparse-checkout: config
+          sparse-checkout-cone-mode: true
+
+      - name: Clone GitOps repo
+        env:
+          CICD_TOKEN: ${{ secrets.CICD_TOKEN }}
+          GITOPS_REPO: ${{ matrix.gitops_repo }}
+        run: |
+          git clone --depth 1 --quiet \
+            "https://x-access-token:${CICD_TOKEN}@github.com/${GITOPS_REPO}.git" \
+            /tmp/gitops-repo
+
+      - name: Check Helm chart versions
+        env:
+          CLUSTER_NAME: ${{ matrix.name }}
+        run: |
+          GITOPS_DIR="/tmp/gitops-repo/k8s-manifests/components"
+
+          # Step 1: Build HelmRepository map (namespace/name -> URL and type)
+          declare -A REPO_URLS
+          declare -A REPO_TYPES
+
+          while read -r file; do
+            [ -n "$file" ] || continue
+            while IFS=$'\t' read -r ns name url type; do
+              [ -n "$name" ] && [ -n "$url" ] || continue
+              REPO_URLS["${ns}/${name}"]="$url"
+              REPO_TYPES["${ns}/${name}"]="${type}"
+            done < <(yq -r 'select(.kind == "HelmRepository") | [.metadata.namespace, .metadata.name, .spec.url, .spec.type // "default"] | @tsv' "$file" 2>/dev/null || true)
+          done < <(grep -rl 'kind: HelmRepository' "$GITOPS_DIR" --include='*.yaml' --include='*.yml' 2>/dev/null | grep -v gotk-components || true)
+
+          echo "Found ${#REPO_URLS[@]} HelmRepositories"
+
+          # Step 2: Extract HelmReleases
+          > /tmp/releases.tsv
+          while read -r file; do
+            [ -n "$file" ] || continue
+            yq -r 'select(.kind == "HelmRelease") | [.spec.chart.spec.chart, .spec.chart.spec.version, .spec.chart.spec.sourceRef.name, .spec.chart.spec.sourceRef.namespace] | @tsv' "$file" 2>/dev/null >> /tmp/releases.tsv || true
+          done < <(grep -rl 'kind: HelmRelease' "$GITOPS_DIR" --include='*.yaml' --include='*.yml' 2>/dev/null | grep -v gotk-components || true)
+
+          RELEASE_COUNT=$(wc -l < /tmp/releases.tsv | tr -d ' ')
+          echo "Found ${RELEASE_COUNT} HelmReleases"
+
+          # Step 3: Pre-fetch index.yaml for each unique Helm repo URL
+          declare -A INDEX_FILES
+          mkdir -p /tmp/helm-indexes
+
+          for REPO_KEY in "${!REPO_URLS[@]}"; do
+            URL="${REPO_URLS[$REPO_KEY]}"
+            TYPE="${REPO_TYPES[$REPO_KEY]}"
+
+            # Skip OCI repositories (no index.yaml available)
+            [[ "$TYPE" = "oci" || "$URL" == oci://* ]] && continue
+
+            URL_HASH=$(echo "$URL" | md5sum | cut -d' ' -f1)
+            CACHE_FILE="/tmp/helm-indexes/${URL_HASH}.yaml"
+
+            if [ ! -f "$CACHE_FILE" ]; then
+              INDEX_URL="${URL%/}/index.yaml"
+              echo "Fetching index: ${INDEX_URL}"
+              curl -sSfL --max-time 15 "$INDEX_URL" > "$CACHE_FILE" 2>/dev/null || > "$CACHE_FILE"
+            fi
+
+            INDEX_FILES["$REPO_KEY"]="$CACHE_FILE"
+          done
+
+          # Step 4: Compare pinned versions against latest
+          ROWS=""
+          OUTDATED=0
+          CHECKED=0
+          SKIPPED=0
+
+          while IFS=$'\t' read -r CHART VERSION REF_NAME REF_NS; do
+            [ -n "$CHART" ] && [ -n "$VERSION" ] || continue
+
+            # Skip internal charts
+            [ "$REF_NAME" = "kio-devops-templates" ] && continue
+
+            CHECKED=$((CHECKED + 1))
+            REPO_KEY="${REF_NS}/${REF_NAME}"
+            URL="${REPO_URLS[$REPO_KEY]:-}"
+            TYPE="${REPO_TYPES[$REPO_KEY]:-default}"
+
+            if [ -z "$URL" ]; then
+              ROWS+="| :grey_question: | ${CHART} | ${VERSION} | _repo not found_ | ${REF_NAME} |"$'\n'
+              SKIPPED=$((SKIPPED + 1))
+              continue
+            fi
+
+            # Skip OCI repositories
+            if [[ "$TYPE" = "oci" || "$URL" == oci://* ]]; then
+              ROWS+="| :white_circle: | ${CHART} | ${VERSION} | _OCI (skipped)_ | ${REF_NAME} |"$'\n'
+              SKIPPED=$((SKIPPED + 1))
+              continue
+            fi
+
+            CACHE_FILE="${INDEX_FILES[$REPO_KEY]:-}"
+            if [ -z "$CACHE_FILE" ] || [ ! -s "$CACHE_FILE" ]; then
+              ROWS+="| :grey_question: | ${CHART} | ${VERSION} | _fetch failed_ | ${REF_NAME} |"$'\n'
+              SKIPPED=$((SKIPPED + 1))
+              continue
+            fi
+
+            # Get latest version (first entry in the index for this chart)
+            LATEST=$(yq -r ".entries.\"${CHART}\"[0].version // \"\"" "$CACHE_FILE" 2>/dev/null)
+
+            if [ -z "$LATEST" ] || [ "$LATEST" = "null" ]; then
+              ROWS+="| :grey_question: | ${CHART} | ${VERSION} | _not in index_ | ${REF_NAME} |"$'\n'
+              SKIPPED=$((SKIPPED + 1))
+              continue
+            fi
+
+            # Compare versions (strip leading v for comparison)
+            CLEAN_VERSION="${VERSION#v}"
+            CLEAN_LATEST="${LATEST#v}"
+
+            if [ "$CLEAN_VERSION" = "$CLEAN_LATEST" ]; then
+              ROWS+="| :green_circle: | ${CHART} | ${VERSION} | ${LATEST} | ${REF_NAME} |"$'\n'
+            else
+              OUTDATED=$((OUTDATED + 1))
+              ROWS+="| :orange_circle: | **${CHART}** | **${VERSION}** | **${LATEST}** | ${REF_NAME} |"$'\n'
+            fi
+          done < /tmp/releases.tsv
+
+          # Sort rows: outdated first, then current, then skipped
+          SORTED_ROWS=""
+          SORTED_ROWS+=$(echo "$ROWS" | grep ':orange_circle:' || true)$'\n'
+          SORTED_ROWS+=$(echo "$ROWS" | grep ':green_circle:' || true)$'\n'
+          SORTED_ROWS+=$(echo "$ROWS" | grep -E ':(white_circle|grey_question):' || true)
+          SORTED_ROWS=$(echo "$SORTED_ROWS" | grep -v '^$')
+
+          # Write summary
+          {
+            echo "# :helm: Helm Chart Freshness: ${CLUSTER_NAME} cluster"
+            echo ""
+
+            if [ "$OUTDATED" -gt 0 ]; then
+              echo "> [!WARNING]"
+              echo "> **${OUTDATED}** of **${CHECKED}** charts are outdated"
+            else
+              echo "> [!NOTE]"
+              echo "> All **${CHECKED}** charts are up to date"
+            fi
+
+            if [ "$SKIPPED" -gt 0 ]; then
+              echo ">"
+              echo "> _${SKIPPED} charts skipped (OCI registry, fetch failed, or not found)_"
+            fi
+
+            echo ""
+            echo "| Status | Chart | Pinned | Latest | Repository |"
+            echo "|:------:|-------|--------|--------|------------|"
+            echo "${SORTED_ROWS}"
+            echo ""
+            echo "---"
+            echo ""
+            echo "<sub>"
+            echo ""
+            echo ":green_circle: Up to date &nbsp; :orange_circle: Update available &nbsp; :white_circle: Skipped (OCI) &nbsp; :grey_question: Unknown"
+            echo ""
+            echo "</sub>"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "Helm freshness check complete. ${OUTDATED} of ${CHECKED} charts outdated."
+
+      - name: Clean up
+        if: always()
+        run: rm -rf /tmp/gitops-repo /tmp/helm-indexes
