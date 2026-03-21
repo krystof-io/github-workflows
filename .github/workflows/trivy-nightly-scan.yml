@@ -6,6 +6,9 @@ on:
 permissions:
   contents: read
 
+env:
+  TRIVY_VERSION: '0.69.3'
+
 jobs:
   discover-clusters:
     name: Discover Clusters
@@ -46,7 +49,7 @@ jobs:
           password: ${{ secrets.IMAGE_REGISTRY_PASSWORD }}
 
       - name: Pull Trivy image
-        run: docker pull ${{ vars.DOCKER_PROXY_HOST }}/aquasec/trivy:latest
+        run: docker pull ${{ vars.DOCKER_PROXY_HOST }}/aquasec/trivy:${{ env.TRIVY_VERSION }}
 
       - name: Create Trivy cache directory
         run: mkdir -p ${{ runner.temp }}/trivy-cache
@@ -107,7 +110,7 @@ jobs:
       - name: Scan images and produce report
         env:
           REGISTRY: ${{ vars.IMAGE_REGISTRY_HOST }}
-          TRIVY_IMAGE: ${{ vars.DOCKER_PROXY_HOST }}/aquasec/trivy:latest
+          TRIVY_IMAGE: ${{ vars.DOCKER_PROXY_HOST }}/aquasec/trivy:${{ env.TRIVY_VERSION }}
           TRIVY_CACHE: ${{ runner.temp }}/trivy-cache
           GHCR_PROXY: ${{ vars.GHCR_PROXY_HOST }}
           SEVERITY: CRITICAL,HIGH
@@ -348,7 +351,7 @@ jobs:
           password: ${{ secrets.IMAGE_REGISTRY_PASSWORD }}
 
       - name: Pull Trivy image
-        run: docker pull ${{ vars.DOCKER_PROXY_HOST }}/aquasec/trivy:latest
+        run: docker pull ${{ vars.DOCKER_PROXY_HOST }}/aquasec/trivy:${{ env.TRIVY_VERSION }}
 
       - name: Create Trivy cache directory
         run: mkdir -p ${{ runner.temp }}/trivy-cache
@@ -381,7 +384,7 @@ jobs:
       - name: Discover and scan third-party images
         env:
           REGISTRY: ${{ vars.IMAGE_REGISTRY_HOST }}
-          TRIVY_IMAGE: ${{ vars.DOCKER_PROXY_HOST }}/aquasec/trivy:latest
+          TRIVY_IMAGE: ${{ vars.DOCKER_PROXY_HOST }}/aquasec/trivy:${{ env.TRIVY_VERSION }}
           TRIVY_CACHE: ${{ runner.temp }}/trivy-cache
           GHCR_PROXY: ${{ vars.GHCR_PROXY_HOST }}
           SEVERITY: CRITICAL,HIGH
