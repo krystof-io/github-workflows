@@ -57,4 +57,20 @@
         <cve>CVE-2026-0540</cve>
     </suppress>
 
+    <!--
+        CVE-2026-0994: DoS via recursion depth bypass in protobuf ParseDict().
+        This vulnerability is Python-only (google.protobuf.json_format.ParseDict).
+        The Java protobuf library does not contain this code path.
+        OWASP Dependency-Check matches the CVE to protobuf-java by artifact name.
+        Suppress until: NVD corrects the CPE scope to exclude Java.
+    -->
+    <suppress>
+        <notes><![CDATA[
+            Python-only vulnerability in protobuf json_format.ParseDict().
+            Does not affect protobuf-java.
+        ]]></notes>
+        <packageUrl regex="true">^pkg:maven/com\.google\.protobuf/protobuf\-java@.*$</packageUrl>
+        <cve>CVE-2026-0994</cve>
+    </suppress>
+
 </suppressions>
