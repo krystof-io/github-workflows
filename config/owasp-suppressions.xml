@@ -69,7 +69,7 @@
             Python-only vulnerability in protobuf json_format.ParseDict().
             Does not affect protobuf-java.
         ]]></notes>
-        <packageUrl regex="true">^pkg:maven/com\.google\.protobuf/protobuf\-java@.*$</packageUrl>
+        <packageUrl regex="true">^pkg:maven/com\.google\.protobuf/protobuf\-java.*@.*$</packageUrl>
         <cve>CVE-2026-0994</cve>
     </suppress>
 
