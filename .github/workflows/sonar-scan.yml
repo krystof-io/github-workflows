@@ -18,6 +18,10 @@ on:
         default: '**/dto/**,**/model/**,**/exception/**,**/config/**,**/tools/**,**/*Application.java,**/*MapperImpl.java'
         type: string
         description: 'Comma-separated glob patterns for SonarQube coverage exclusions'
+      sonar_exclusions:
+        default: '**/tools/**'
+        type: string
+        description: 'Comma-separated glob patterns to exclude from all SonarQube analysis (issues, coverage, duplication)'
     outputs:
       sonar_status:
         description: 'SonarQube analysis status (passed/failed)'
@@ -165,6 +169,7 @@ jobs:
             -Dsonar.qualitygate.wait=true \
             -Dsonar.qualitygate.timeout=300 \
             -Dsonar.coverage.exclusions="${{ inputs.sonar_coverage_exclusions }}" \
+            -Dsonar.exclusions="${{ inputs.sonar_exclusions }}" \
 
           
           SONAR_EXIT_CODE=$?

@@ -22,6 +22,10 @@ on:
         default: '**/dto/**,**/model/**,**/exception/**,**/config/**,**/tools/**,**/*Application.java,**/*MapperImpl.java'
         type: string
         description: 'Comma-separated glob patterns for SonarQube coverage exclusions'
+      sonar_exclusions:
+        default: '**/tools/**'
+        type: string
+        description: 'Comma-separated glob patterns to exclude from all SonarQube analysis (issues, coverage, duplication)'
       target_clusters:
         default: '[]'
         type: string
@@ -347,6 +351,7 @@ jobs:
       java_version: ${{ inputs.java_version }}
       maven_profiles: ${{ inputs.maven_profiles }}
       sonar_coverage_exclusions: ${{ inputs.sonar_coverage_exclusions }}
+      sonar_exclusions: ${{ inputs.sonar_exclusions }}
     secrets:
       MAVEN_REPO_USERNAME: ${{ secrets.MAVEN_REPO_USERNAME }}
       MAVEN_REPO_PASSWORD: ${{ secrets.MAVEN_REPO_PASSWORD }}
