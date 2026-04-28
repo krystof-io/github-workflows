@@ -124,7 +124,7 @@ jobs:
           HAS_CLUSTERS=$(echo $TARGET_CLUSTERS | jq 'length > 0')
           echo "has_clusters=$HAS_CLUSTERS" >> $GITHUB_OUTPUT
 
-      - uses: krystof-io/cache@v4.3.0-1.0.0
+      - uses: krystof-io/cache@v5.0.5-1.0.0
         with:
           path: ~/.m2/repository
           key: maven-cache-${{ github.run_id }}-${{ github.run_attempt }}
@@ -137,7 +137,7 @@ jobs:
           RUNS_ON_S3_FORCE_PATH_STYLE: 'true'
 
       - name: Initialize Maven settings
-        uses: s4u/maven-settings-action@v3.1.0
+        uses: s4u/maven-settings-action@v4.0.0
         with:
           servers: |
             [
@@ -230,7 +230,7 @@ jobs:
 
       - name: Upload OpenAPI spec artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: openapi-spec
           path: ${{ inputs.openapi_spec_path }}
@@ -251,7 +251,7 @@ jobs:
           repository: ${{ inputs.dockerfile_repo }}
           path: docker-templates
 
-      - uses: krystof-io/cache@v4.3.0-1.0.0
+      - uses: krystof-io/cache@v5.0.5-1.0.0
         with:
           path: ~/.m2/repository
           key: maven-cache-${{ github.run_id }}-${{ github.run_attempt }}
@@ -266,7 +266,7 @@ jobs:
           RUNS_ON_S3_FORCE_PATH_STYLE: 'true'
 
       - name: Initialize Maven settings
-        uses: s4u/maven-settings-action@v3.1.0
+        uses: s4u/maven-settings-action@v4.0.0
         with:
           servers: |
             [

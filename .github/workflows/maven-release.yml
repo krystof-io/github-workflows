@@ -51,7 +51,7 @@ jobs:
           # Use Personal Access Token to allow triggering other workflows
           token: ${{ secrets.CICD_TOKEN }}
 
-      - uses: krystof-io/cache@v4.3.0-1.0.0
+      - uses: krystof-io/cache@v5.0.5-1.0.0
         with:
           path: ~/.m2/repository
           key: maven-cache-${{ github.run_id }}-${{ github.run_attempt }}
@@ -71,7 +71,7 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
       - name: Initialize Maven settings
-        uses: s4u/maven-settings-action@v3.1.0
+        uses: s4u/maven-settings-action@v4.0.0
         with:
           servers: |
             [

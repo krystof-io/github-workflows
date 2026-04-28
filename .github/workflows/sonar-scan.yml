@@ -84,7 +84,7 @@ jobs:
           fetch-depth: 0
         
       - name: Initialize Maven settings
-        uses: s4u/maven-settings-action@v3.1.0
+        uses: s4u/maven-settings-action@v4.0.0
         with:
           servers: |
             [
@@ -102,7 +102,7 @@ jobs:
           MAVEN_REPO_PASSWORD: ${{ secrets.MAVEN_REPO_PASSWORD }}
           MAVEN_REPO_URL: ${{ vars.MAVEN_REPO_URL }}  
             
-      - uses: krystof-io/cache@v4.3.0-1.0.0
+      - uses: krystof-io/cache@v5.0.5-1.0.0
         with:
           path: ~/.m2/repository
           key: maven-cache-${{ github.run_id }}-${{ github.run_attempt }}
@@ -116,7 +116,7 @@ jobs:
           RUNS_ON_AWS_REGION: ${{ vars.S3_CACHE_REGION }}
           RUNS_ON_S3_FORCE_PATH_STYLE: 'true'
                     
-      - uses: krystof-io/cache@v4.3.0-1.0.0
+      - uses: krystof-io/cache@v5.0.5-1.0.0
         with:
           path: ~/.m2/repository/org/owasp/dependency-check-data
           key: ${{ runner.os }}-owasp-data-${{ hashFiles('**/pom.xml') }}-${{ github.run_id }}

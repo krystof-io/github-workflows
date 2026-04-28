@@ -55,7 +55,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 #v5
         
-      - uses: krystof-io/cache@v4.3.0-1.0.0
+      - uses: krystof-io/cache@v5.0.5-1.0.0
         with:
           path: ~/.m2/repository
           key: maven-cache-${{ github.run_id }}-${{ github.run_attempt }}
@@ -68,7 +68,7 @@ jobs:
           RUNS_ON_S3_FORCE_PATH_STYLE: 'true'
 
       - name: Initialize Maven settings
-        uses: s4u/maven-settings-action@v3.1.0
+        uses: s4u/maven-settings-action@v4.0.0
         with:
           servers: |
             [
@@ -219,7 +219,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 #v5
         
-      - uses: krystof-io/cache@v4.3.0-1.0.0
+      - uses: krystof-io/cache@v5.0.5-1.0.0
         with:
           path: ~/.m2/repository
           key: maven-cache-${{ github.run_id }}-${{ github.run_attempt }}
@@ -234,7 +234,7 @@ jobs:
           RUNS_ON_S3_FORCE_PATH_STYLE: 'true'
 
       - name: Initialize Maven settings
-        uses: s4u/maven-settings-action@v3.1.0
+        uses: s4u/maven-settings-action@v4.0.0
         with:
           servers: |
             [
@@ -294,7 +294,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 #v5
         
-      - uses: krystof-io/cache@v4.3.0-1.0.0
+      - uses: krystof-io/cache@v5.0.5-1.0.0
         with:
           path: ~/.m2/repository
           key: maven-cache-${{ github.run_id }}-${{ github.run_attempt }}
@@ -309,7 +309,7 @@ jobs:
           RUNS_ON_S3_FORCE_PATH_STYLE: 'true'
 
       - name: Initialize Maven settings
-        uses: s4u/maven-settings-action@v3.1.0
+        uses: s4u/maven-settings-action@v4.0.0
         with:
           servers: |
             [
