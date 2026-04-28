@@ -50,7 +50,7 @@ jobs:
     steps:
       - name: Download OpenAPI spec artifact
         id: download
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: openapi-spec
           path: ./spec-artifact
