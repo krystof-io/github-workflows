@@ -120,7 +120,7 @@ jobs:
           RUNS_ON_AWS_REGION: ${{ vars.S3_CACHE_REGION }}
           RUNS_ON_S3_FORCE_PATH_STYLE: 'true'
                     
-      - uses: krystof-io/cache@v5.0.5-1.0.0
+      - uses: krystof-io/cache/restore@v5.0.5-1.0.0
         with:
           path: ~/.m2/repository/org/owasp/dependency-check-data
           key: owasp-nvd-data-${{ steps.cache-keys.outputs.date }}
@@ -133,7 +133,7 @@ jobs:
           RUNS_ON_S3_BUCKET_ENDPOINT: ${{ vars.S3_CACHE_ENDPOINT }}
           RUNS_ON_AWS_REGION: ${{ vars.S3_CACHE_REGION }}
           RUNS_ON_S3_FORCE_PATH_STYLE: 'true'
-          RUNS_ON_GLOBAL_CACHE_PREFIX: 'cache-global' # This gets shared across repos
+          RUNS_ON_GLOBAL_CACHE_PREFIX: 'cache-global'
 
       - name: Restore build artifacts
         uses: krystof-io/cache@v5.0.5-1.0.0
