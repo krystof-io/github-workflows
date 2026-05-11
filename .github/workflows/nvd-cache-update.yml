@@ -1,0 +1,75 @@
+name: Nightly NVD Cache Update
+
+on:
+  schedule:
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  update-nvd-cache:
+    runs-on: arc-runners-javadev
+    steps:
+      - name: Compute cache key
+        id: cache-keys
+        run: echo "date=$(date +%Y-%m-%d)" >> $GITHUB_OUTPUT
+
+      - name: Initialize Maven settings
+        uses: s4u/maven-settings-action@v4.0.0
+        with:
+          mirrors: |
+            [
+            {"id": "nexus", "name":"nexus", "mirrorOf":"*", "url":"${{ vars.MAVEN_REPO_URL }}"}
+            ]
+
+      - name: Restore existing NVD cache
+        uses: krystof-io/cache@v5.0.5-1.0.0
+        with:
+          path: ~/.m2/repository/org/owasp/dependency-check-data
+          key: owasp-nvd-data-${{ steps.cache-keys.outputs.date }}
+          restore-keys: |
+            owasp-nvd-data-
+        env:
+          RUNS_ON_S3_BUCKET_CACHE: 'runner-caches'
+          AWS_ACCESS_KEY_ID: ${{ secrets.S3_CACHE_ACCESS_KEY }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.S3_CACHE_SECRET_KEY }}
+          RUNS_ON_S3_BUCKET_ENDPOINT: ${{ vars.S3_CACHE_ENDPOINT }}
+          RUNS_ON_AWS_REGION: ${{ vars.S3_CACHE_REGION }}
+          RUNS_ON_S3_FORCE_PATH_STYLE: 'true'
+          RUNS_ON_GLOBAL_CACHE_PREFIX: 'cache-global'
+
+      - name: Create minimal Maven project
+        run: |
+          mkdir -p /tmp/nvd-updater
+          cat > /tmp/nvd-updater/pom.xml << 'POMEOF'
+          <project>
+            <modelVersion>4.0.0</modelVersion>
+            <groupId>io.krystof</groupId>
+            <artifactId>nvd-cache-updater</artifactId>
+            <version>1.0.0</version>
+          </project>
+          POMEOF
+
+      - name: Update NVD database
+        run: |
+          mvn -f /tmp/nvd-updater/pom.xml \
+            org.owasp:dependency-check-maven:12.1.8:update-only \
+            -DnvdApiKey=${{ secrets.NVD_API_KEY }}
+        env:
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+
+      - name: Save NVD cache
+        uses: krystof-io/cache/save@v5.0.5-1.0.0
+        with:
+          path: ~/.m2/repository/org/owasp/dependency-check-data
+          key: owasp-nvd-data-${{ steps.cache-keys.outputs.date }}
+        env:
+          RUNS_ON_S3_BUCKET_CACHE: 'runner-caches'
+          AWS_ACCESS_KEY_ID: ${{ secrets.S3_CACHE_ACCESS_KEY }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.S3_CACHE_SECRET_KEY }}
+          RUNS_ON_S3_BUCKET_ENDPOINT: ${{ vars.S3_CACHE_ENDPOINT }}
+          RUNS_ON_AWS_REGION: ${{ vars.S3_CACHE_REGION }}
+          RUNS_ON_S3_FORCE_PATH_STYLE: 'true'
+          RUNS_ON_GLOBAL_CACHE_PREFIX: 'cache-global'

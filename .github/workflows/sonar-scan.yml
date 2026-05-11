@@ -85,7 +85,7 @@ jobs:
 
       - name: Compute cache keys
         id: cache-keys
-        run: echo "week=$(date +%Y-%V)" >> $GITHUB_OUTPUT
+        run: echo "date=$(date +%Y-%m-%d)" >> $GITHUB_OUTPUT
 
       - name: Initialize Maven settings
         uses: s4u/maven-settings-action@v4.0.0
@@ -123,9 +123,9 @@ jobs:
       - uses: krystof-io/cache@v5.0.5-1.0.0
         with:
           path: ~/.m2/repository/org/owasp/dependency-check-data
-          key: owasp-nvd-data-week-${{ steps.cache-keys.outputs.week }}
+          key: owasp-nvd-data-${{ steps.cache-keys.outputs.date }}
           restore-keys: |
-            owasp-nvd-data-week-
+            owasp-nvd-data-
         env:
           RUNS_ON_S3_BUCKET_CACHE: 'runner-caches'
           AWS_ACCESS_KEY_ID: ${{ secrets.S3_CACHE_ACCESS_KEY }}
@@ -161,9 +161,10 @@ jobs:
           mvn org.owasp:dependency-check-maven:12.1.8:check \
             -Dformats=HTML,XML,JSON \
             -DnvdApiKey=${{ env.NVD_API_KEY }} \
+            -DautoUpdate=false \
             -DsuppressionFiles=.github-workflows/config/owasp-suppressions.xml \
             -DskipTests
-          
+
         env:
           NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
 
