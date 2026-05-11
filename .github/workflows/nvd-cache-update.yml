@@ -60,16 +60,3 @@ jobs:
         env:
           NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
 
-      - name: Save NVD cache
-        uses: krystof-io/cache/save@v5.0.5-1.0.0
-        with:
-          path: ~/.m2/repository/org/owasp/dependency-check-data
-          key: owasp-nvd-data-${{ steps.cache-keys.outputs.date }}
-        env:
-          RUNS_ON_S3_BUCKET_CACHE: 'runner-caches'
-          AWS_ACCESS_KEY_ID: ${{ secrets.S3_CACHE_ACCESS_KEY }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.S3_CACHE_SECRET_KEY }}
-          RUNS_ON_S3_BUCKET_ENDPOINT: ${{ vars.S3_CACHE_ENDPOINT }}
-          RUNS_ON_AWS_REGION: ${{ vars.S3_CACHE_REGION }}
-          RUNS_ON_S3_FORCE_PATH_STYLE: 'true'
-          RUNS_ON_GLOBAL_CACHE_PREFIX: 'cache-global'
