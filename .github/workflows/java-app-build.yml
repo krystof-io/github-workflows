@@ -503,11 +503,27 @@ jobs:
       CLUSTER_CA_CERTIFICATE: ${{ secrets[format('K8S_CLUSTER_CA_CERT_FOR_{0}_CLUSTER', matrix.name)] }}
       SERVICE_ACCOUNT_TOKEN: ${{ secrets[format('SERVICE_ACCOUNT_TOKEN_FOR_{0}_CLUSTER_CICD_K8S_ACCESS', matrix.name)] }}
 
+  # Create GitHub Release for production releases
+  create-github-release:
+    needs: [build, build-docker-image, validate-prod-release, deploy-prod, validate-prod-deployment]
+    if: >-
+      startsWith(github.ref, 'refs/tags/v')
+      && needs.build.result == 'success'
+      && needs.build-docker-image.result == 'success'
+      && needs.validate-prod-release.result == 'success'
+      && (needs.deploy-prod.result == 'success' || needs.deploy-prod.result == 'skipped')
+      && (needs.validate-prod-deployment.result == 'success' || needs.validate-prod-deployment.result == 'skipped')
+    uses: ./.github/workflows/create-github-release.yml
+    with:
+      version: ${{ needs.build.outputs.version }}
+    secrets:
+      CICD_TOKEN: ${{ secrets.CICD_TOKEN }}
+
   # Workflow Summary
   workflow-summary:
     runs-on: arc-runners-javadev
     if: always()
-    needs: [build, build-docker-image, sonar-scan, publish-openapi, deploy-dev, validate-dev-deployment, validate-prod-release, deploy-prod, validate-prod-deployment]
+    needs: [build, build-docker-image, sonar-scan, publish-openapi, deploy-dev, validate-dev-deployment, validate-prod-release, deploy-prod, validate-prod-deployment, create-github-release]
     steps:
       - name: Generate Workflow Summary
         run: |
@@ -596,8 +612,16 @@ jobs:
             else
               echo "| ✅ Prod Validation | ❌ Failed | Production validation failed |" >> $GITHUB_STEP_SUMMARY
             fi
+
+            if [[ "${{ needs.create-github-release.result }}" == "success" ]]; then
+              echo "| 🏷️ GitHub Release | ✅ Success | Release created with changelog |" >> $GITHUB_STEP_SUMMARY
+            elif [[ "${{ needs.create-github-release.result }}" == "skipped" ]]; then
+              echo "| 🏷️ GitHub Release | ⏭️ Skipped | Prerequisites not met |" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "| 🏷️ GitHub Release | ❌ Failed | Release creation failed |" >> $GITHUB_STEP_SUMMARY
+            fi
           fi
-          
+
           echo "" >> $GITHUB_STEP_SUMMARY
           
           # Overall status

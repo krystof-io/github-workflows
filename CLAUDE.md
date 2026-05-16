@@ -38,6 +38,9 @@ Updates GitOps repositories with new image tags. Creates PRs that are auto-merge
 ### `.github/workflows/validate-flux-deployment.yml`
 Validates Kubernetes deployments after Flux reconciliation. Checks that correct image tags are running in pods.
 
+### `.github/workflows/create-github-release.yml`
+Creates GitHub Releases with auto-generated changelogs on successful release builds. Uses `gh release list` to find the previous release tag, then creates a new release with `--generate-notes --notes-start-tag` so the changelog covers changes since the last *successful* release (not just the previous tag). Called automatically by `java-app-build.yml` and `java-lib-build.yml` after the release pipeline succeeds. Uses `CICD_TOKEN` PAT for write access.
+
 ### `.github/workflows/publish-openapi-spec.yml`
 Publishes OpenAPI specs from services to the central API registry. Features:
 - Auto-detection: If `target/openapi.yaml` exists after build, it's automatically published
@@ -153,6 +156,7 @@ All workflows declare explicit permissions following the principle of least priv
 | `sonar-scan.yml` | `contents: read`, `pull-requests: write` | Checkout with history; PR comments |
 | `flux-deploy.yml` | `contents: read` | Checkout (GitOps writes use CICD_TOKEN) |
 | `validate-flux-deployment.yml` | `contents: read` | Minimal (only runs kubectl) |
+| `create-github-release.yml` | `contents: read` | Checkout (release writes use CICD_TOKEN) |
 | `publish-openapi-spec.yml` | `contents: read` | Checkout (registry writes use CICD_TOKEN) |
 
 ### Caller Workflow Permissions (in app repos)

@@ -35,6 +35,8 @@ on:
         required: true
       S3_CACHE_SECRET_KEY:
         required: true
+      CICD_TOKEN:
+        required: true
 
 permissions:
   contents: read
@@ -374,11 +376,23 @@ jobs:
           echo "✅ SonarQube quality gate passed" >> $GITHUB_STEP_SUMMARY
           echo "✅ Successfully published to Maven RELEASE repository" >> $GITHUB_STEP_SUMMARY
 
+  # Create GitHub Release for production releases
+  create-github-release:
+    needs: [build, publish-release]
+    if: >-
+      startsWith(github.ref, 'refs/tags/v')
+      && needs.publish-release.result == 'success'
+    uses: ./.github/workflows/create-github-release.yml
+    with:
+      version: ${{ needs.build.outputs.version }}
+    secrets:
+      CICD_TOKEN: ${{ secrets.CICD_TOKEN }}
+
   # Workflow Summary
   workflow-summary:
     runs-on: arc-runners-javadev
     if: always()
-    needs: [build, sonar-scan, validate-prod-release, publish-snapshot, publish-release]
+    needs: [build, sonar-scan, validate-prod-release, publish-snapshot, publish-release, create-github-release]
     steps:
       - name: Generate Workflow Summary
         run: |
@@ -446,6 +460,14 @@ jobs:
               echo "| 📦 Publish RELEASE | ❌ Failed | Release publication failed |" >> $GITHUB_STEP_SUMMARY
             else
               echo "| 📦 Publish RELEASE | ⏭️ Skipped | Not a release build |" >> $GITHUB_STEP_SUMMARY
+            fi
+
+            if [[ "${{ needs.create-github-release.result }}" == "success" ]]; then
+              echo "| 🏷️ GitHub Release | ✅ Success | Release created with changelog |" >> $GITHUB_STEP_SUMMARY
+            elif [[ "${{ needs.create-github-release.result }}" == "skipped" ]]; then
+              echo "| 🏷️ GitHub Release | ⏭️ Skipped | Prerequisites not met |" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "| 🏷️ GitHub Release | ❌ Failed | Release creation failed |" >> $GITHUB_STEP_SUMMARY
             fi
           fi
           

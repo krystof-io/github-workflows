@@ -1,0 +1,55 @@
+# Reusable workflow for creating GitHub Releases with auto-generated changelogs
+# Location: github-workflows repo at .github/workflows/create-github-release.yml
+
+name: Create GitHub Release
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        required: false
+        type: string
+        description: 'Version string for summary display'
+    secrets:
+      CICD_TOKEN:
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  create-release:
+    runs-on: arc-runners-javadev
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 #v5
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.CICD_TOKEN }}
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+
+          PREVIOUS_TAG=$(gh release list --limit 1 --json tagName --jq '.[0].tagName' 2>/dev/null || echo "")
+
+          if [ -n "$PREVIOUS_TAG" ]; then
+            echo "Creating release ${TAG} with changelog since ${PREVIOUS_TAG}"
+            gh release create "$TAG" --generate-notes --notes-start-tag "$PREVIOUS_TAG"
+          else
+            echo "Creating first release ${TAG}"
+            gh release create "$TAG" --generate-notes
+          fi
+
+      - name: Release Summary
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          VERSION="${{ inputs.version }}"
+
+          echo "## 🏷️ GitHub Release Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Tag**: \`${TAG}\`" >> $GITHUB_STEP_SUMMARY
+          if [ -n "${VERSION}" ]; then
+            echo "- **Version**: \`${VERSION}\`" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "✅ GitHub Release created with auto-generated changelog" >> $GITHUB_STEP_SUMMARY

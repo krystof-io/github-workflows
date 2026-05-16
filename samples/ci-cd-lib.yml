@@ -36,11 +36,7 @@ jobs:
       # java_version: '25'           # Default: '17'
       # maven_profiles: 'extra'      # Default: ''
       
-    secrets:
-      MAVEN_REPO_USERNAME: ${{ secrets.MAVEN_REPO_USERNAME }}
-      MAVEN_REPO_PASSWORD: ${{ secrets.MAVEN_REPO_PASSWORD }}
-      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-      SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+    secrets: inherit
 
 # That's it! The shared workflow handles:
 # - Building and testing your library
