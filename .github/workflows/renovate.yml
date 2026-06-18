@@ -62,10 +62,50 @@ jobs:
           if [ "${IS_DRY_RUN}" = "true" ]; then
             DRY="-e RENOVATE_DRY_RUN=full"
           fi
+          mkdir -p "${RUNNER_TEMP}/renovate-report"
+          # reportType/reportPath are experimental self-hosted options; they write
+          # a JSON summary of the whole autodiscover run (every repo, its branches
+          # and upgrades). Mounted out of the container since we run with --rm.
           docker run --rm \
             -e RENOVATE_TOKEN \
             -e RENOVATE_PLATFORM=github \
             -e RENOVATE_CONFIG="$(cat config/renovate-global.json)" \
+            -e RENOVATE_REPORT_TYPE=file \
+            -e RENOVATE_REPORT_PATH=/tmp/report/renovate-report.json \
+            -e RENOVATE_REPORT_FORMATTING=true \
             -e LOG_LEVEL \
             ${DRY} \
+            -v "${RUNNER_TEMP}/renovate-report:/tmp/report" \
             "${RENOVATE_IMAGE}"
+
+      # Surface the run summary in the job page. The JSON shape is experimental,
+      # so keep this best-effort and rely on the uploaded artifact for full detail.
+      - name: Render report to step summary
+        if: always()
+        env:
+          REPORT: ${{ runner.temp }}/renovate-report/renovate-report.json
+        run: |
+          if [ ! -f "${REPORT}" ]; then
+            echo "No Renovate report produced." >> "${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+          {
+            echo "## Renovate run report"
+            echo ""
+            echo "| Repository | Branch | Update |"
+            echo "|---|---|---|"
+            jq -r '
+              .repositories | to_entries[] as $r
+              | $r.value.branches[]? as $b
+              | $b.upgrades[]?
+              | "| \($r.key) | \($b.branchName) | \(.depName) \(.currentVersion) → \(.newVersion // .newValue) |"
+            ' "${REPORT}" || echo "| _(could not parse report; see artifact)_ | | |"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Upload report artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: renovate-report
+          path: ${{ runner.temp }}/renovate-report/renovate-report.json
+          if-no-files-found: warn
