@@ -12,8 +12,7 @@
     "pip-compile",
     "pipenv",
     "poetry",
-    "pep621",
-    "setup-py"
+    "pep621"
   ],
   "labels": [
     "dependencies",
@@ -42,9 +41,9 @@
       "automerge": false
     },
     {
-      "matchPackagePrefixes": [
-        "org.springframework.boot:",
-        "org.springframework:"
+      "matchPackageNames": [
+        "org.springframework.boot:{/,}**",
+        "org.springframework:{/,}**"
       ],
       "groupName": "spring dependencies"
     },
