@@ -1,0 +1,71 @@
+name: Renovate (org)
+# Single self-hosted Renovate job that autodiscovers and processes every repo
+# the Renovate GitHub App is installed on. App repos need no Renovate files of
+# their own; shared policy lives in config/renovate-global.json.
+on:
+  schedule:
+    - cron: '0 5 * * 1'
+  workflow_dispatch:
+    inputs:
+      logLevel:
+        description: Renovate log level
+        default: info
+        type: choice
+        options:
+          - debug
+          - info
+          - warn
+      dryRun:
+        description: Dry run (no PRs/branches/issues written) — opt-in for debugging
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: renovate-org
+  cancel-in-progress: false
+
+jobs:
+  renovate:
+    runs-on: arc-runners-javadev
+    env:
+      RENOVATE_IMAGE: ${{ vars.DOCKER_PROXY_HOST }}/renovate/renovate:41
+    steps:
+      # The global config file lives in this repo, so check it out.
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      # Org-scoped token: pass owner and omit `repositories` so the installation
+      # token covers every repo the App can access — required for autodiscover.
+      - name: Generate org-scoped GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.RENOVATE_APP_ID }}
+          private-key: ${{ secrets.RENOVATE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+
+      - name: Pull Renovate image
+        run: docker pull "${RENOVATE_IMAGE}"
+
+      # Config is passed via RENOVATE_CONFIG (the file's contents) rather than a
+      # bind mount, so it needs no host-path assumptions about the runner.
+      - name: Run Renovate
+        env:
+          RENOVATE_TOKEN: ${{ steps.app-token.outputs.token }}
+          LOG_LEVEL: ${{ inputs.logLevel || 'info' }}
+          IS_DRY_RUN: ${{ inputs.dryRun }}
+        run: |
+          DRY=""
+          if [ "${IS_DRY_RUN}" = "true" ]; then
+            DRY="-e RENOVATE_DRY_RUN=full"
+          fi
+          docker run --rm \
+            -e RENOVATE_TOKEN \
+            -e RENOVATE_PLATFORM=github \
+            -e RENOVATE_CONFIG="$(cat config/renovate-global.json)" \
+            -e LOG_LEVEL \
+            ${DRY} \
+            "${RENOVATE_IMAGE}"

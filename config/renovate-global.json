@@ -1,0 +1,59 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended"
+  ],
+  "autodiscover": true,
+  "onboarding": false,
+  "requireConfig": "optional",
+  "enabledManagers": [
+    "maven",
+    "pip_requirements",
+    "pip-compile",
+    "pipenv",
+    "poetry",
+    "pep621",
+    "setup-py"
+  ],
+  "labels": [
+    "dependencies",
+    "renovate"
+  ],
+  "dependencyDashboard": true,
+  "prConcurrentLimit": 5,
+  "schedule": [
+    "before 6am on monday"
+  ],
+  "packageRules": [
+    {
+      "matchDatasources": [
+        "maven"
+      ],
+      "registryUrls": [
+        "http://registry.private.krystof.io/repository/maven-public"
+      ]
+    },
+    {
+      "matchUpdateTypes": [
+        "patch",
+        "minor"
+      ],
+      "groupName": "non-major dependencies",
+      "automerge": false
+    },
+    {
+      "matchPackagePrefixes": [
+        "org.springframework.boot:",
+        "org.springframework:"
+      ],
+      "groupName": "spring dependencies"
+    },
+    {
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "dependencyDashboardApproval": true,
+      "automerge": false
+    }
+  ]
+}
