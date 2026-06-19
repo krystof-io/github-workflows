@@ -8,6 +8,16 @@ on:
 permissions:
   contents: read
 
+env:
+  # dependency-check version used to BUILD the H2 database that downstream
+  # builds consume. Must stay in sync with the :check goal version in
+  # sonar-scan.yml, since the H2 schema must match between writer and reader.
+  DC_VERSION: '12.2.2'
+  # vulnz (open-vulnerability-cli) release used to mirror the NVD data feed.
+  VULNZ_VERSION: '9.0.4'
+  # Local directory holding the vulnz-generated NVD data feed (nvdcve-*.json.gz).
+  DATAFEED_DIR: nvd-datafeed
+
 jobs:
   update-nvd-cache:
     runs-on: arc-runners-javadev
@@ -24,7 +34,28 @@ jobs:
             {"id": "nexus", "name":"nexus", "mirrorOf":"*", "url":"${{ vars.MAVEN_REPO_URL }}"}
             ]
 
-      - name: Restore existing NVD cache
+      # vulnz keeps its own incremental mirror between runs (its watermark lives
+      # in cache.properties). Restoring the prior feed means a normal night only
+      # pulls NVD's small daily delta instead of the full ~341k-record dataset.
+      - name: Restore NVD data feed mirror
+        uses: krystof-io/cache@v5.0.5-1.0.0
+        with:
+          path: ~/${{ env.DATAFEED_DIR }}
+          key: nvd-datafeed-cache-${{ steps.cache-keys.outputs.date }}
+          restore-keys: |
+            nvd-datafeed-cache-
+        env:
+          RUNS_ON_S3_BUCKET_CACHE: 'runner-caches'
+          AWS_ACCESS_KEY_ID: ${{ secrets.S3_CACHE_ACCESS_KEY }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.S3_CACHE_SECRET_KEY }}
+          RUNS_ON_S3_BUCKET_ENDPOINT: ${{ vars.S3_CACHE_ENDPOINT }}
+          RUNS_ON_AWS_REGION: ${{ vars.S3_CACHE_REGION }}
+          RUNS_ON_S3_FORCE_PATH_STYLE: 'true'
+          RUNS_ON_GLOBAL_CACHE_PREFIX: 'cache-global'
+
+      # The H2 database built below is what builds consume (restored in
+      # sonar-scan.yml as owasp-nvd-data-*). This action saves it at post-job.
+      - name: Restore OWASP H2 database cache
         uses: krystof-io/cache@v5.0.5-1.0.0
         with:
           path: ~/.m2/repository/org/owasp/dependency-check-data
@@ -40,6 +71,50 @@ jobs:
           RUNS_ON_S3_FORCE_PATH_STYLE: 'true'
           RUNS_ON_GLOBAL_CACHE_PREFIX: 'cache-global'
 
+      - name: Download vulnz CLI
+        run: |
+          curl -fsSL -o /tmp/vulnz.jar \
+            "https://github.com/jeremylong/open-vulnerability-cli/releases/download/v${VULNZ_VERSION}/vulnz-${VULNZ_VERSION}.jar"
+          java -jar /tmp/vulnz.jar --version || true
+
+      # This is the ONLY step that talks to the live NVD API. It is isolated to
+      # this single nightly job (builds never call NVD), can be given a long
+      # window, and resumes from the restored mirror — so the cost of NVD's
+      # periodic full-dataset re-stamp is paid once here, centrally, not per build.
+      - name: Refresh NVD data feed mirror (vulnz)
+        timeout-minutes: 120
+        run: |
+          # NVD's API intermittently returns HTTP 524 ("origin timeout") partway
+          # through a large pull. Retry a couple of times with a generous window
+          # so a transient outage doesn't break the refresh.
+          attempts=2
+          retry_delay=90
+          attempt_timeout=55m
+          dir="$HOME/${DATAFEED_DIR}"
+          mkdir -p "$dir"
+          for i in $(seq 1 "$attempts"); do
+            echo "::group::vulnz NVD mirror refresh attempt $i/$attempts"
+            if timeout "$attempt_timeout" java -jar /tmp/vulnz.jar cve \
+                 --cache --directory "$dir"; then
+              echo "::endgroup::"
+              echo "NVD data feed refreshed on attempt $i."
+              ls -lh "$dir"
+              exit 0
+            fi
+            echo "::endgroup::"
+            echo "::warning::vulnz refresh attempt $i/$attempts failed."
+            if [ "$i" -lt "$attempts" ]; then
+              echo "Waiting ${retry_delay}s before retrying..."
+              sleep "$retry_delay"
+            fi
+          done
+          echo "::error::NVD data feed refresh failed after $attempts attempts." >&2
+          exit 1
+        env:
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+          # vulnz reads the delay (ms) from this env var; harmless if ignored.
+          DELAY: '2000'
+
       - name: Create minimal Maven project
         run: |
           mkdir -p /tmp/nvd-updater
@@ -52,40 +127,12 @@ jobs:
           </project>
           POMEOF
 
-      - name: Update NVD database
-        # Overall safety cap: a healthy incremental update finishes in well under
-        # a minute; a full re-pull takes ~15-30 min but can run longer when NVD is
-        # slow. Allow up to 2 hours so a sluggish-but-recovering NVD endpoint has
-        # room to complete a full pull (including a retry) instead of being killed.
-        timeout-minutes: 120
+      # Build the H2 database from the LOCAL data feed (file:// URL) — fully
+      # offline, no NVD API key, no 524s. This rebuilds the cache that
+      # sonar-scan.yml restores as owasp-nvd-data-*.
+      - name: Build OWASP H2 database from data feed
+        timeout-minutes: 20
         run: |
-          # NVD's API (fronted by Cloudflare) intermittently returns HTTP 524
-          # ("origin timeout") partway through the large full-dataset pull, which
-          # fails the whole update. Retry a couple of times so a transient outage
-          # doesn't break the nightly job, giving each attempt a generous window
-          # and pausing between tries to let NVD's backend recover.
-          attempts=2
-          retry_delay=90
-          attempt_timeout=55m
-          for i in $(seq 1 "$attempts"); do
-            echo "::group::NVD update attempt $i/$attempts"
-            if timeout "$attempt_timeout" mvn -f /tmp/nvd-updater/pom.xml \
-                 org.owasp:dependency-check-maven:12.2.2:update-only \
-                 -DnvdApiDelay=2000 \
-                 -DnvdApiKey="$NVD_API_KEY"; then
-              echo "::endgroup::"
-              echo "NVD update succeeded on attempt $i."
-              exit 0
-            fi
-            echo "::endgroup::"
-            echo "::warning::NVD update attempt $i/$attempts failed."
-            if [ "$i" -lt "$attempts" ]; then
-              echo "Waiting ${retry_delay}s before retrying..."
-              sleep "$retry_delay"
-            fi
-          done
-          echo "::error::NVD update failed after $attempts attempts." >&2
-          exit 1
-        env:
-          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
-
+          mvn -f /tmp/nvd-updater/pom.xml \
+            org.owasp:dependency-check-maven:${DC_VERSION}:update-only \
+            -DnvdDatafeedUrl="file://$HOME/${DATAFEED_DIR}/nvdcve-{0}.json.gz"
