@@ -19,6 +19,7 @@
     "renovate"
   ],
   "dependencyDashboard": true,
+  "dependencyDashboardAutoclose": true,
   "prConcurrentLimit": 5,
   "schedule": [
     "before 6am on monday"
