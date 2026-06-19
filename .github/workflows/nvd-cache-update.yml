@@ -12,7 +12,7 @@ env:
   # dependency-check version used to BUILD the H2 database that downstream
   # builds consume. Must stay in sync with the :check goal version in
   # sonar-scan.yml, since the H2 schema must match between writer and reader.
-  DC_VERSION: '12.2.2'
+  DC_VERSION: '12.1.8'
   # vulnz (open-vulnerability-cli) release used to mirror the NVD data feed.
   VULNZ_VERSION: '9.0.4'
   # Local directory holding the vulnz-generated NVD data feed (nvdcve-*.json.gz).
@@ -75,7 +75,8 @@ jobs:
         run: |
           curl -fsSL -o /tmp/vulnz.jar \
             "https://github.com/jeremylong/open-vulnerability-cli/releases/download/v${VULNZ_VERSION}/vulnz-${VULNZ_VERSION}.jar"
-          java -jar /tmp/vulnz.jar --version || true
+          # Confirm the jar is present and runnable (top-level help exits 0).
+          java -jar /tmp/vulnz.jar -h
 
       # This is the ONLY step that talks to the live NVD API. It is isolated to
       # this single nightly job (builds never call NVD), can be given a long

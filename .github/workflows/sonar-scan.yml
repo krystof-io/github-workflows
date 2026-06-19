@@ -161,7 +161,7 @@ jobs:
           # Version must match the dependency-check version that builds the H2
           # database in nvd-cache-update.yml (DC_VERSION), since the H2 schema
           # must match between the writer and this reader.
-          mvn org.owasp:dependency-check-maven:12.2.2:check \
+          mvn org.owasp:dependency-check-maven:12.1.8:check \
             -Dformats=HTML,XML,JSON \
             -DnvdApiKey=${{ env.NVD_API_KEY }} \
             -DautoUpdate=false \
