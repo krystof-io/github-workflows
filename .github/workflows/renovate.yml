@@ -2,19 +2,17 @@ name: Renovate (org)
 # Single self-hosted Renovate job that autodiscovers and processes every repo
 # the Renovate GitHub App is installed on. App repos need no Renovate files of
 # their own; shared policy lives in config/renovate-global.json.
+#
+# Reusable only: the schedule/dispatch trigger lives in the private repo
+# krystof-io/github-workflows-private-schedules so the run report (which lists
+# private repo names) stays in a private repo rather than this public one.
 on:
-  schedule:
-    - cron: '0 5 * * 1'
-  workflow_dispatch:
+  workflow_call:
     inputs:
       logLevel:
         description: Renovate log level
         default: info
-        type: choice
-        options:
-          - debug
-          - info
-          - warn
+        type: string
       dryRun:
         description: Dry run (no PRs/branches/issues written) — opt-in for debugging
         default: false
@@ -33,9 +31,14 @@ jobs:
     env:
       RENOVATE_IMAGE: ${{ vars.DOCKER_PROXY_HOST }}/renovate/renovate:41
     steps:
-      # The global config file lives in this repo, so check it out.
-      - name: Checkout
+      # Check out THIS repo (not the calling repo) to get the global config.
+      # Pinned because the caller lives in a different (private) repo, so the
+      # default checkout would otherwise pull the caller and miss the config.
+      - name: Checkout github-workflows (for renovate config)
         uses: actions/checkout@v5
+        with:
+          repository: krystof-io/github-workflows
+          ref: main
 
       # Org-scoped token: pass owner and omit `repositories` so the installation
       # token covers every repo the App can access — required for autodiscover.
