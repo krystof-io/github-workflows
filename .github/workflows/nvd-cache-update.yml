@@ -54,22 +54,23 @@ jobs:
 
       - name: Update NVD database
         # Overall safety cap: a healthy incremental update finishes in well under
-        # a minute; a full re-pull takes ~15-30 min. This bounds the worst case
-        # (including retries) so a degraded NVD endpoint can't run for hours.
-        timeout-minutes: 60
+        # a minute; a full re-pull takes ~15-30 min but can run longer when NVD is
+        # slow. Allow up to 2 hours so a sluggish-but-recovering NVD endpoint has
+        # room to complete a full pull (including a retry) instead of being killed.
+        timeout-minutes: 120
         run: |
           # NVD's API (fronted by Cloudflare) intermittently returns HTTP 524
           # ("origin timeout") partway through the large full-dataset pull, which
-          # fails the whole update. Retry a few times so a transient outage
-          # doesn't break the nightly job, bounding each attempt and pausing
-          # between tries to let NVD's backend recover.
-          attempts=3
+          # fails the whole update. Retry a couple of times so a transient outage
+          # doesn't break the nightly job, giving each attempt a generous window
+          # and pausing between tries to let NVD's backend recover.
+          attempts=2
           retry_delay=90
-          attempt_timeout=20m
+          attempt_timeout=55m
           for i in $(seq 1 "$attempts"); do
             echo "::group::NVD update attempt $i/$attempts"
             if timeout "$attempt_timeout" mvn -f /tmp/nvd-updater/pom.xml \
-                 org.owasp:dependency-check-maven:12.1.8:update-only \
+                 org.owasp:dependency-check-maven:12.2.2:update-only \
                  -DnvdApiDelay=2000 \
                  -DnvdApiKey="$NVD_API_KEY"; then
               echo "::endgroup::"
