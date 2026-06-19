@@ -3,8 +3,8 @@ name: Renovate (org)
 # the Renovate GitHub App is installed on. App repos need no Renovate files of
 # their own; shared policy lives in config/renovate-global.json.
 #
-# Reusable only: the schedule/dispatch trigger lives in the private repo
-# krystof-io/github-workflows-private-schedules so the run report (which lists
+# Reusable only: the schedule/dispatch trigger lives in a private repo
+# so the run report (which lists
 # private repo names) stays in a private repo rather than this public one.
 on:
   workflow_call:
