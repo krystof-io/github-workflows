@@ -87,6 +87,7 @@ jobs:
         if: always()
         env:
           REPORT: ${{ runner.temp }}/renovate-report/renovate-report.json
+          BASE: ${{ github.server_url }}
         run: |
           if [ ! -f "${REPORT}" ]; then
             echo "No Renovate report produced." >> "${GITHUB_STEP_SUMMARY}"
@@ -95,14 +96,55 @@ jobs:
           {
             echo "## Renovate run report"
             echo ""
-            echo "| Repository | Branch | Update |"
+            jq -r --arg base "${BASE}" '
+              [.repositories[].branches[]?] as $b
+              | "_\(.repositories|length) repos scanned · "
+                + "\([$b[]|select(.prNo!=null)]|length) open PRs · "
+                + "\([$b[]|select(.result=="needs-approval")]|length) awaiting dashboard approval · "
+                + "\([$b[]|select(.result=="not-scheduled")]|length) pending (off-schedule)_"
+            ' "${REPORT}"
+
+            # Actionable: branches that have a real PR (linked).
+            echo ""
+            echo "### Open PRs"
+            echo "| Repository | PR | Type |"
             echo "|---|---|---|"
-            jq -r '
-              .repositories | to_entries[] as $r
-              | $r.value.branches[]? as $b
-              | $b.upgrades[]?
-              | "| \($r.key) | \($b.branchName) | \(.depName) \(.currentVersion) → \(.newVersion // .newValue) |"
-            ' "${REPORT}" || echo "| _(could not parse report; see artifact)_ | | |"
+            jq -r --arg base "${BASE}" '
+              .repositories | to_entries[] | .key as $r
+              | .value.branches[]?
+              | select(.prNo != null)
+              | "| [\($r)](\($base)/\($r)) "
+                + "| [\(.prTitle | gsub("\\|"; "\\|"))](\($base)/\($r)/pull/\(.prNo)) "
+                + "| \((.upgrades[0].updateType) // "-") |"
+            ' "${REPORT}" || echo "| _(none)_ | | |"
+
+            # Rollup: one row per repo that has any pending work (repo linked).
+            echo ""
+            echo "### Per-repo summary"
+            echo "| Repository | Open PRs | Needs approval | Pending |"
+            echo "|---|---|---|---|"
+            jq -r --arg base "${BASE}" '
+              .repositories | to_entries[]
+              | select(.value.branches | length > 0)
+              | .key as $r | .value.branches as $b
+              | "| [\($r)](\($base)/\($r)) "
+                + "| \([$b[]|select(.result=="pr-created" or .result=="done")]|length) "
+                + "| \([$b[]|select(.result=="needs-approval")]|length) "
+                + "| \([$b[]|select(.result=="not-scheduled")]|length) |"
+            ' "${REPORT}" || echo "| _(none)_ | | | |"
+
+            # Problems (e.g. private-registry lookup failures), repo linked.
+            if [ "$(jq '[.repositories[].problems[]?] | length' "${REPORT}")" -gt 0 ]; then
+              echo ""
+              echo "### Problems"
+              echo "| Repository | Problem |"
+              echo "|---|---|"
+              jq -r --arg base "${BASE}" '
+                .repositories | to_entries[] | .key as $r
+                | .value.problems[]?
+                | "| [\($r)](\($base)/\($r)) | \(.msg): \((.warnings // [.msg]) | join("; ") | gsub("\\|"; "\\|")) |"
+              ' "${REPORT}"
+            fi
           } >> "${GITHUB_STEP_SUMMARY}"
 
       - name: Upload report artifact

@@ -41,18 +41,20 @@
       "automerge": false
     },
     {
-      "matchPackageNames": [
-        "org.springframework.boot:{/,}**",
-        "org.springframework:{/,}**"
-      ],
-      "groupName": "spring dependencies"
-    },
-    {
       "matchUpdateTypes": [
         "major"
       ],
       "dependencyDashboardApproval": true,
       "automerge": false
+    },
+    {
+      "matchManagers": [
+        "maven"
+      ],
+      "groupName": "maven dependencies",
+      "separateMajorMinor": false,
+      "separateMinorPatch": false,
+      "dependencyDashboardApproval": false
     }
   ]
 }
