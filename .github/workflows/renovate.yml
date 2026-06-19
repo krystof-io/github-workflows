@@ -62,7 +62,10 @@ jobs:
           if [ "${IS_DRY_RUN}" = "true" ]; then
             DRY="-e RENOVATE_DRY_RUN=full"
           fi
+          # World-writable so the non-root Renovate container user can write the
+          # report into the bind mount (otherwise the write fails with EACCES).
           mkdir -p "${RUNNER_TEMP}/renovate-report"
+          chmod 777 "${RUNNER_TEMP}/renovate-report"
           # reportType/reportPath are experimental self-hosted options; they write
           # a JSON summary of the whole autodiscover run (every repo, its branches
           # and upgrades). Mounted out of the container since we run with --rm.
