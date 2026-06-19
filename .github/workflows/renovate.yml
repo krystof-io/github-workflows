@@ -44,7 +44,7 @@ jobs:
       # token covers every repo the App can access — required for autodiscover.
       - name: Generate org-scoped GitHub App token
         id: app-token
-        uses: actions/create-github-app-token@v2
+        uses: actions/create-github-app-token@v3
         with:
           app-id: ${{ secrets.RENOVATE_APP_ID }}
           private-key: ${{ secrets.RENOVATE_APP_PRIVATE_KEY }}
@@ -152,7 +152,7 @@ jobs:
 
       - name: Upload report artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: renovate-report
           path: ${{ runner.temp }}/renovate-report/renovate-report.json
