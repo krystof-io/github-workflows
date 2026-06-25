@@ -95,14 +95,19 @@ jobs:
           dir="$HOME/${DATAFEED_DIR}"
           mkdir -p "$dir"
           echo "::group::vulnz NVD mirror refresh (single long attempt)"
-          timeout 320m java -jar /tmp/vulnz.jar cve --cache --directory "$dir"
+          # --maxRetry: ride through NVD's sustained 503/429 bursts. The default
+          #   (~10) makes vulnz abort within minutes during the reprocessing window;
+          #   a high budget lets it wait the bursts out across the long window below.
+          # --delay: pace requests (ms) to reduce the load that triggers the 503s.
+          #   (Note: vulnz only honors --delay as a flag, NOT a DELAY env var.)
+          timeout 320m java -jar /tmp/vulnz.jar cve --cache --directory "$dir" \
+            --maxRetry 50 \
+            --delay 4000
           echo "::endgroup::"
           echo "NVD data feed refreshed."
           ls -lh "$dir"
         env:
           NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
-          # vulnz reads the delay (ms) from this env var; harmless if ignored.
-          DELAY: '2000'
 
       - name: Create minimal Maven project
         run: |
