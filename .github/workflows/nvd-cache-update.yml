@@ -83,34 +83,22 @@ jobs:
       # window, and resumes from the restored mirror — so the cost of NVD's
       # periodic full-dataset re-stamp is paid once here, centrally, not per build.
       - name: Refresh NVD data feed mirror (vulnz)
-        timeout-minutes: 120
+        # Single long-running attempt. While NVD is degraded (HTTP/2 stream resets)
+        # during its SSVC/Affected reprocessing window, the full ~341k-record pull is
+        # slow but progresses. vulnz retries the resets internally and only advances
+        # its watermark on a COMPLETE pull, so short capped retries just cold-restart
+        # and waste time. Give it one uninterrupted window (under GitHub's 6h job cap)
+        # to finish the single full pull that seeds the mirror; later nights then pull
+        # only small daily deltas and finish quickly.
+        timeout-minutes: 330
         run: |
-          # NVD's API intermittently returns HTTP 524 ("origin timeout") partway
-          # through a large pull. Retry a couple of times with a generous window
-          # so a transient outage doesn't break the refresh.
-          attempts=2
-          retry_delay=90
-          attempt_timeout=55m
           dir="$HOME/${DATAFEED_DIR}"
           mkdir -p "$dir"
-          for i in $(seq 1 "$attempts"); do
-            echo "::group::vulnz NVD mirror refresh attempt $i/$attempts"
-            if timeout "$attempt_timeout" java -jar /tmp/vulnz.jar cve \
-                 --cache --directory "$dir"; then
-              echo "::endgroup::"
-              echo "NVD data feed refreshed on attempt $i."
-              ls -lh "$dir"
-              exit 0
-            fi
-            echo "::endgroup::"
-            echo "::warning::vulnz refresh attempt $i/$attempts failed."
-            if [ "$i" -lt "$attempts" ]; then
-              echo "Waiting ${retry_delay}s before retrying..."
-              sleep "$retry_delay"
-            fi
-          done
-          echo "::error::NVD data feed refresh failed after $attempts attempts." >&2
-          exit 1
+          echo "::group::vulnz NVD mirror refresh (single long attempt)"
+          timeout 320m java -jar /tmp/vulnz.jar cve --cache --directory "$dir"
+          echo "::endgroup::"
+          echo "NVD data feed refreshed."
+          ls -lh "$dir"
         env:
           NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
           # vulnz reads the delay (ms) from this env var; harmless if ignored.
