@@ -156,27 +156,19 @@ jobs:
           path: .github-workflows
           sparse-checkout: config/owasp-suppressions.xml
 
-      # ===================================================================
-      # TEMPORARILY DISABLED — re-enable once the NVD mirror is healthy.
-      # The NVD API cannot serve a full dataset pull during its SSVC/Affected
-      # reprocessing window, so the nightly job can't refresh the H2 database
-      # and this check would run against a stale cache. Commented out to unblock
-      # prod promotions. TODO(nvd): restore when nvd-cache-update.yml succeeds.
-      # -------------------------------------------------------------------
-      # - name: Pre Sonar Dep Check
-      #   run: |
-      #     # Version must match the dependency-check version that builds the H2
-      #     # database in nvd-cache-update.yml (DC_VERSION), since the H2 schema
-      #     # must match between the writer and this reader.
-      #     mvn org.owasp:dependency-check-maven:12.1.8:check \
-      #       -Dformats=HTML,XML,JSON \
-      #       -DnvdApiKey=${{ env.NVD_API_KEY }} \
-      #       -DautoUpdate=false \
-      #       -DsuppressionFiles=.github-workflows/config/owasp-suppressions.xml \
-      #       -DskipTests
-      #   env:
-      #     NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
-      # ===================================================================
+      - name: Pre Sonar Dep Check
+        run: |
+          # Version must match the dependency-check version that builds the H2
+          # database in nvd-cache-update.yml (DC_VERSION), since the H2 schema
+          # must match between the writer and this reader.
+          mvn org.owasp:dependency-check-maven:12.1.8:check \
+            -Dformats=HTML,XML,JSON \
+            -DnvdApiKey=${{ env.NVD_API_KEY }} \
+            -DautoUpdate=false \
+            -DsuppressionFiles=.github-workflows/config/owasp-suppressions.xml \
+            -DskipTests
+        env:
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
 
       - name: Sonar Analysis with Quality Gate
         id: sonar
