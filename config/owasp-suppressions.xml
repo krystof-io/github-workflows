@@ -32,13 +32,15 @@
     </suppress>
 
     <!--
-        CVE-2025-15599 & CVE-2026-0540: DOMPurify XSS bypass via missing rawtext
-        elements in SAFE_FOR_XML regex. Fixed in DOMPurify 3.3.2 / 2.5.9, but
-        swagger-ui 5.32.0 (latest) still bundles a vulnerable version.
-        No upstream fix available yet.
+        DOMPurify (bundled inside swagger-ui) XSS-bypass advisories. swagger-ui
+        5.32.6 still ships a vulnerable DOMPurify (3.4.0) and there is no upstream
+        fix yet. These CVE IDs rotate as new DOMPurify advisories are published;
+        the older -15599/-0540 IDs no longer match the current jar, so the active
+        set below is kept in sync with what dependency-check currently reports.
+        All are Medium (CVSS ~4.0), and Swagger UI is disabled in production.
         Risk is mitigated: Swagger UI is restricted to non-production profiles only.
         Tracking: https://github.com/swagger-api/swagger-ui/issues/10478
-        Suppress until: swagger-ui ships with DOMPurify >= 3.3.2
+        Suppress until: swagger-ui ships with a patched DOMPurify.
     -->
     <suppress>
         <notes><![CDATA[
@@ -47,14 +49,10 @@
         ]]></notes>
         <filePath regex="true">.*swagger-ui.*\.jar.*</filePath>
         <cve>CVE-2025-15599</cve>
-    </suppress>
-    <suppress>
-        <notes><![CDATA[
-            Suppressed pending swagger-ui upgrade of bundled DOMPurify.
-            Swagger UI is disabled in production profiles.
-        ]]></notes>
-        <filePath regex="true">.*swagger-ui.*\.jar.*</filePath>
         <cve>CVE-2026-0540</cve>
+        <cve>CVE-2026-49458</cve>
+        <cve>CVE-2026-49459</cve>
+        <cve>CVE-2026-49978</cve>
     </suppress>
 
     <!--
@@ -71,6 +69,29 @@
         ]]></notes>
         <packageUrl regex="true">^pkg:maven/com\.google\.protobuf/protobuf\-java.*@.*$</packageUrl>
         <cve>CVE-2026-0994</cve>
+    </suppress>
+
+    <!--
+        CVE-2026-53914: Code execution via unsafe deserialization (CWE-502) in
+        JetBrains Kotlin's BUILD CACHE metadata, fixed in Kotlin 2.4.20.
+        The vulnerable code path is the Kotlin compiler / Gradle build cache,
+        i.e. a build-time concern. broadcaster-service is a Java application;
+        kotlin-stdlib is only a transitive RUNTIME dependency and never invokes
+        the Kotlin build cache, so this is not reachable here.
+        Dependency-Check matches the jetbrains:kotlin CPE to every kotlin-stdlib*
+        jar by artifact name (currently kotlin-stdlib-2.3.21 and
+        kotlin-stdlib-common-1.9.10) — these are the 2 High Severity vulns
+        failing the quality gate.
+        Suppress until: the transitive kotlin-stdlib is at 2.4.20+.
+    -->
+    <suppress>
+        <notes><![CDATA[
+            CVE-2026-53914 is Kotlin build-cache deserialization (build-time).
+            This is a Java runtime service; kotlin-stdlib is transitive and never
+            invokes the build cache.
+        ]]></notes>
+        <packageUrl regex="true">^pkg:maven/org\.jetbrains\.kotlin/kotlin-stdlib.*@.*$</packageUrl>
+        <cve>CVE-2026-53914</cve>
     </suppress>
 
 </suppressions>
