@@ -94,4 +94,30 @@
         <cve>CVE-2026-53914</cve>
     </suppress>
 
+    <!--
+        CVE-2025-46392: Uncontrolled resource consumption (DoS) in Apache
+        Commons Configuration 1.x when loading UNTRUSTED configuration. Apache
+        will NOT fix 1.x; the only remediation is migrating to commons-configuration2
+        (different groupId + Java package), which is not a drop-in.
+        This is a load-bearing transitive: twitch4j-helix wraps its Feign HTTP
+        clients with Netflix Hystrix, which uses Netflix Archaius, which is built
+        directly on commons-configuration 1.x. It cannot be excluded or upgraded
+        without breaking Twitch4J's HTTP layer.
+        Not exploitable here: commons-configuration is used internally by Archaius
+        with trusted config only; no attacker-controlled configuration is loaded.
+        Matches Apache's guidance that 1.x is safe for trusted configs.
+        Suppress until: Twitch4J drops Hystrix/Archaius or moves to commons-configuration2.
+    -->
+    <suppress>
+        <notes><![CDATA[
+            CVE-2025-46392 only affects untrusted-config loading. Here
+            commons-configuration is an internal, load-bearing transitive of
+            Twitch4J's Hystrix/Archaius HTTP plumbing; only trusted config is
+            loaded. Cannot be upgraded (1.x is won't-fix; 2.x is a different
+            package Archaius can't use).
+        ]]></notes>
+        <packageUrl regex="true">^pkg:maven/commons-configuration/commons-configuration@.*$</packageUrl>
+        <cve>CVE-2025-46392</cve>
+    </suppress>
+
 </suppressions>
