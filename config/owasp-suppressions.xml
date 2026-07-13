@@ -78,19 +78,19 @@
         i.e. a build-time concern. broadcaster-service is a Java application;
         kotlin-stdlib is only a transitive RUNTIME dependency and never invokes
         the Kotlin build cache, so this is not reachable here.
-        Dependency-Check matches the jetbrains:kotlin CPE to every kotlin-stdlib*
-        jar by artifact name (currently kotlin-stdlib-2.3.21 and
-        kotlin-stdlib-common-1.9.10) — these are the 2 High Severity vulns
-        failing the quality gate.
-        Suppress until: the transitive kotlin-stdlib is at 2.4.20+.
+        Dependency-Check stamps the jetbrains:kotlin CPE onto every
+        org.jetbrains.kotlin jar by artifact name (kotlin-stdlib, kotlin-reflect,
+        kotlin-stdlib-common, etc.), so this match is scoped to the whole
+        org.jetbrains.kotlin group rather than a single artifact.
+        Suppress until: the transitive Kotlin artifacts are at 2.4.20+.
     -->
     <suppress>
         <notes><![CDATA[
             CVE-2026-53914 is Kotlin build-cache deserialization (build-time).
-            This is a Java runtime service; kotlin-stdlib is transitive and never
-            invokes the build cache.
+            This is a Java runtime service; the Kotlin artifacts are transitive
+            and never invoke the build cache.
         ]]></notes>
-        <packageUrl regex="true">^pkg:maven/org\.jetbrains\.kotlin/kotlin-stdlib.*@.*$</packageUrl>
+        <packageUrl regex="true">^pkg:maven/org\.jetbrains\.kotlin/.*@.*$</packageUrl>
         <cve>CVE-2026-53914</cve>
     </suppress>
 
