@@ -120,4 +120,47 @@
         <cve>CVE-2025-46392</cve>
     </suppress>
 
+    <!--
+        CVE-2026-66299: Uncontrolled resource consumption (DoS) in Apache Tomcat
+        (CVSS 7.5). Affects 11.0.0-M20 through 11.0.24, 10.1.24 through 10.1.57,
+        and 9.0.89 through 9.0.120.
+
+        Not applicable to embedded Tomcat. The vulnerability is in the WebSocket
+        *chat example*, which ships in the `examples` web application of the
+        standalone Tomcat distribution. The advisory states it directly:
+        "Users who have followed the security guidance to remove the examples web
+        application are not affected by this issue."
+
+        Spring Boot embeds only the servlet container via the tomcat-embed-*
+        artifacts, which contain no webapps at all — inspecting
+        tomcat-embed-core-11.0.24.jar shows only jakarta/servlet, jakarta/security
+        and org/apache packages, with zero entries for the examples application.
+        There is therefore no code path to the vulnerable example.
+
+        Cannot currently be fixed by upgrading: the advisory recommends 11.0.25 /
+        10.1.58 / 9.0.121 "(when released)", and 11.0.25 is not yet published.
+        Spring Boot 4.1.0 itself manages 11.0.24, so this is the newest available.
+
+        Scoped to the tomcat-embed family because dependency-check's CPE matching
+        attributes product-level Tomcat CVEs to any of core / el / websocket, and
+        the reasoning above applies identically to all three.
+
+        Suppress until: 11.0.25 is released and picked up (either via Spring Boot's
+        managed version or an explicit tomcat.version property), then delete this
+        entry — dependency-check will stop reporting it on its own once the version
+        moves past 11.0.24, but leaving dead suppressions hides future findings.
+    -->
+    <suppress>
+        <notes><![CDATA[
+            CVE-2026-66299 affects Tomcat's WebSocket chat example, which lives in the
+            `examples` web application and is not present in the embedded distribution.
+            Spring Boot ships only tomcat-embed-* (servlet container, no webapps), so the
+            vulnerable code is absent — the advisory confirms installations without the
+            examples webapp are unaffected. No fixed release exists yet (11.0.25 is
+            "when released"); 11.0.24 is what Spring Boot 4.1.0 manages.
+        ]]></notes>
+        <packageUrl regex="true">^pkg:maven/org\.apache\.tomcat\.embed/tomcat\-embed\-.*@.*$</packageUrl>
+        <cve>CVE-2026-66299</cve>
+    </suppress>
+
 </suppressions>
