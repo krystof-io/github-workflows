@@ -10,6 +10,11 @@ on:
         required: true
         type: string
         description: 'Name of the application'
+      app_dir_name:
+        required: false
+        type: string
+        default: ''
+        description: 'Directory name under cluster_path/target_namespace/, if it differs from app_name (e.g. MCP servers: app_name is the k8s Deployment name "mcp-server-sonarqube" used by validate-flux-deployment.yml, but the manifest directory is just "sonarqube"). Defaults to app_name when omitted — zero behavior change for existing callers.'
       image_tag:
         required: true
         type: string
@@ -34,6 +39,21 @@ on:
         default: ''
         type: string
         description: 'Additional suffix for commit message'
+      manifest_kind:
+        required: false
+        type: string
+        default: 'helm-values'
+        description: 'How the image tag is stored: "helm-values" (default, existing behavior — reads/writes .image.tag in app_dir_name/app_name-values.yaml) or "k8s-deployment" (plain Kubernetes manifests — reads/writes the full image ref, repo+tag, on spec.template.spec.containers[0].image in app_dir_name/deployment.yaml). Only "helm-values" was ever exercised before this input existed; adding it changes nothing for a caller that omits it.'
+      image_repo:
+        required: false
+        type: string
+        default: ''
+        description: 'Full image repository (registry host + path, no tag), required when manifest_kind is "k8s-deployment" — e.g. "docker-private.privpub.krystof.io/krystof-io/mcp-server-sonarqube". Ignored for "helm-values" (the values file already carries repository separately from tag).'
+      skip_kustomization_update:
+        required: false
+        type: boolean
+        default: false
+        description: 'When true, never touch target_namespace/kustomization.yaml — for a namespace directory (like mcp/) whose resources list is hand-curated in a different style (directory refs with a trailing slash) than the bare-name Helm-app convention apply_changes() assumes. Default false preserves existing behavior for every current caller.'
     secrets:
       CICD_TOKEN:
         required: true
@@ -56,51 +76,98 @@ jobs:
           
           GITOPS_REPO="${{ inputs.gitops_repo }}"
           APP_NAME="${{ inputs.app_name }}"
+          APP_DIR_NAME="${{ inputs.app_dir_name }}"
           NAMESPACE="${{ inputs.target_namespace }}"
           IMAGE_TAG="${{ inputs.image_tag }}"
+          IMAGE_REPO="${{ inputs.image_repo }}"
           CLUSTER_PATH="${{ inputs.cluster_path }}"
           CLUSTER_NAME="${{ inputs.cluster_name }}"
           COMMIT_SUFFIX="${{ inputs.commit_message_suffix }}"
+          MANIFEST_KIND="${{ inputs.manifest_kind }}"
+          SKIP_KUSTOMIZATION="${{ inputs.skip_kustomization_update }}"
+
+          # app_dir_name defaults to app_name — every existing caller (Helm
+          # apps, where the directory IS the app name) is unaffected.
+          if [ -z "${APP_DIR_NAME}" ]; then
+            APP_DIR_NAME="${APP_NAME}"
+          fi
+
+          if [ "${MANIFEST_KIND}" = "k8s-deployment" ] && [ -z "${IMAGE_REPO}" ]; then
+            echo "❌ manifest_kind=k8s-deployment requires image_repo to be set"
+            exit 1
+          fi
           
           # Function to apply our specific changes
           apply_changes() {
-            echo "🔧 Applying changes for ${APP_NAME} deployment..."
+            echo "🔧 Applying changes for ${APP_NAME} deployment (manifest_kind=${MANIFEST_KIND})..."
             
-            # We expect a root kustomization.yaml in the namespace directory, and will add our app name to the
-            # kustomization.yaml if not already present
+            # We expect a root kustomization.yaml in the namespace directory, and will add our app dir to the
+            # kustomization.yaml if not already present — unless the caller owns that list itself
+            # (skip_kustomization_update: true), e.g. a namespace directory like mcp/ whose
+            # resources list uses directory-slash entries (- sonarqube/) rather than this
+            # function's bare-name convention (- inventory-tracker).
             NAMESPACE_PATH="${CLUSTER_PATH}/${NAMESPACE}"
 
-            if [ -f "${NAMESPACE_PATH}/kustomization.yaml" ]; then
-              if ! grep -q " - ${APP_NAME}$" "${NAMESPACE_PATH}/kustomization.yaml"; then
+            if [ "${SKIP_KUSTOMIZATION}" = "true" ]; then
+              echo "ℹ️  skip_kustomization_update=true — leaving ${NAMESPACE_PATH}/kustomization.yaml untouched"
+            elif [ -f "${NAMESPACE_PATH}/kustomization.yaml" ]; then
+              if ! grep -q " - ${APP_DIR_NAME}$" "${NAMESPACE_PATH}/kustomization.yaml"; then
                 cd "${NAMESPACE_PATH}"
-                # Just add the app name to the resources list in kustomization.yaml using yq
-                yq eval ".resources += [\"${APP_NAME}\"]" -i kustomization.yaml
-                echo "✅ Added ${APP_NAME} to kustomization at ${NAMESPACE_PATH}/kustomization.yaml"
+                # Just add the app dir to the resources list in kustomization.yaml using yq
+                yq eval ".resources += [\"${APP_DIR_NAME}\"]" -i kustomization.yaml
+                echo "✅ Added ${APP_DIR_NAME} to kustomization at ${NAMESPACE_PATH}/kustomization.yaml"
                 cd -
               else 
-                echo "ℹ️  ${APP_NAME} already present in kustomization at ${NAMESPACE_PATH}/kustomization.yaml"
+                echo "ℹ️  ${APP_DIR_NAME} already present in kustomization at ${NAMESPACE_PATH}/kustomization.yaml"
               fi
             else
               echo "⚠️  No kustomization.yaml found at ${NAMESPACE_PATH}"
             fi
 
-            # Update image tag
-            APP_PATH="${CLUSTER_PATH}/${NAMESPACE}/${APP_NAME}"
-            
-            # We store our helm values in ${APP_NAME}-values.yaml
-            if [ -f "${APP_PATH}/${APP_NAME}-values.yaml" ]; then
-              # Check if tag is already current
-              CURRENT_TAG=$(yq eval ".image.tag" "${APP_PATH}/${APP_NAME}-values.yaml" 2>/dev/null || echo "none")
-              if [ "$CURRENT_TAG" = "$IMAGE_TAG" ]; then
-                echo "ℹ️  Image tag ${IMAGE_TAG} is already current in ${APP_PATH}/${APP_NAME}-values.yaml"
-                return 0
+            APP_PATH="${CLUSTER_PATH}/${NAMESPACE}/${APP_DIR_NAME}"
+
+            if [ "${MANIFEST_KIND}" = "k8s-deployment" ]; then
+              # Plain Kubernetes Deployment manifest — the image ref (repo:tag)
+              # lives directly on the container spec, not in a separate Helm
+              # values file. One deployment.yaml is assumed to have exactly one
+              # container carrying THIS app's image (true for every MCP server
+              # today); a multi-container deployment.yaml would need a real
+              # container-name match, not index [0], if that ever changes.
+              DEPLOYMENT_FILE="${APP_PATH}/deployment.yaml"
+              if [ -f "${DEPLOYMENT_FILE}" ]; then
+                NEW_IMAGE="${IMAGE_REPO}:${IMAGE_TAG}"
+                CURRENT_IMAGE=$(yq eval ".spec.template.spec.containers[0].image" "${DEPLOYMENT_FILE}" 2>/dev/null || echo "none")
+                if [ "$CURRENT_IMAGE" = "$NEW_IMAGE" ]; then
+                  echo "ℹ️  Image ${NEW_IMAGE} is already current in ${DEPLOYMENT_FILE}"
+                  return 0
+                fi
+
+                yq eval ".spec.template.spec.containers[0].image = \"${NEW_IMAGE}\"" -i "${DEPLOYMENT_FILE}"
+                echo "✅ Updated deployment image at ${DEPLOYMENT_FILE} (${CURRENT_IMAGE} → ${NEW_IMAGE})"
+              else
+                echo "⚠️  No deployment manifest found at ${DEPLOYMENT_FILE}"
               fi
-              
-              # Update Helm values
-              yq eval ".image.tag = \"${IMAGE_TAG}\"" -i "${APP_PATH}/${APP_NAME}-values.yaml"
-              echo "✅ Updated Helm values at ${APP_PATH}/${APP_NAME}-values.yaml (${CURRENT_TAG} → ${IMAGE_TAG})"
             else
-              echo "⚠️  No values file found at ${APP_PATH}/${APP_NAME}-values.yaml"
+              # We store our helm values in ${APP_NAME}-values.yaml — filename
+              # keys off app_name (the Helm release/values convention), not
+              # app_dir_name, since every current helm-values caller has them
+              # equal; a future caller with a differing dir name and
+              # manifest_kind=helm-values would need this revisited.
+              VALUES_FILE="${APP_PATH}/${APP_NAME}-values.yaml"
+              if [ -f "${VALUES_FILE}" ]; then
+                # Check if tag is already current
+                CURRENT_TAG=$(yq eval ".image.tag" "${VALUES_FILE}" 2>/dev/null || echo "none")
+                if [ "$CURRENT_TAG" = "$IMAGE_TAG" ]; then
+                  echo "ℹ️  Image tag ${IMAGE_TAG} is already current in ${VALUES_FILE}"
+                  return 0
+                fi
+
+                # Update Helm values
+                yq eval ".image.tag = \"${IMAGE_TAG}\"" -i "${VALUES_FILE}"
+                echo "✅ Updated Helm values at ${VALUES_FILE} (${CURRENT_TAG} → ${IMAGE_TAG})"
+              else
+                echo "⚠️  No values file found at ${VALUES_FILE}"
+              fi
             fi
           }
           
