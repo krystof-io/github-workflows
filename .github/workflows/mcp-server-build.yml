@@ -54,7 +54,12 @@ permissions:
 
 jobs:
   build:
-    runs-on: arc-runners-basic
+    # javadev, not basic: this job's "Parse target clusters" step needs yq
+    # and jq, which are only guaranteed on arc-runners-javadev (see this
+    # repo's CLAUDE.md — arc-runners-basic has neither). Confirmed the hard
+    # way: the first real run of this workflow failed here with
+    # "yq: command not found" on arc-runners-basic.
+    runs-on: arc-runners-javadev
     outputs:
       image_tag: ${{ steps.tag.outputs.tag }}
       image_repo: ${{ steps.tag.outputs.image_repo }}
