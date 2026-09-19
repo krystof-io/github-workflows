@@ -228,9 +228,58 @@ jobs:
               --head "${BRANCH_NAME}"
             
             echo "🔄 Merging pull request..."
-            # Merge the PR immediately and delete the branch
-            gh pr merge "${BRANCH_NAME}" --repo "${GITOPS_REPO}" --squash --delete-branch
-            
+            # Merge the PR, retrying on the exact failure mode that causes
+            # silent stuck PRs: two deploys racing on main. gh pr merge can
+            # fail with "Base branch was modified" (another PR's squash
+            # landed between create and merge) or "Pull Request has merge
+            # conflicts" (the rebase gh does internally collides with that
+            # same race) - both are real, reproducible GraphQL errors from
+            # GitHub, not flakes. Confirmed via two independent real
+            # incidents: kio-public-cluster PR #1114 (inventory-tracker) and
+            # PR #1111 (broadcaster-service), both created 2026-09-14 by
+            # concurrent Renovate-triggered dev deploys. In both cases the
+            # ORIGINAL script called `gh pr merge` without checking its exit
+            # code, inside a function used as `if deploy_pull_request; then`
+            # - bash's `set -e` does not abort on a failing command whose
+            # exit status is not the function's own returned status when the
+            # function is itself an `if` condition, so the failed merge was
+            # silently swallowed and the job reported SUCCESS while the PR
+            # sat open forever with the branch never deleted and nothing
+            # ever landing on main for Flux to reconcile.
+            #
+            # Fix: retry with a fresh rebase-and-remerge on transient
+            # base-branch-moved conflicts (the actual race), fail loudly on
+            # anything else (a real merge conflict from a genuinely
+            # incompatible change needs a human, not a retry loop).
+            MERGE_RETRIES=0
+            MAX_MERGE_RETRIES=5
+            while true; do
+              MERGE_OUTPUT=$(gh pr merge "${BRANCH_NAME}" --repo "${GITOPS_REPO}" --squash --delete-branch 2>&1)
+              MERGE_EXIT=$?
+              echo "${MERGE_OUTPUT}"
+
+              if [ $MERGE_EXIT -eq 0 ]; then
+                break
+              fi
+
+              MERGE_RETRIES=$((MERGE_RETRIES + 1))
+              if [ $MERGE_RETRIES -ge $MAX_MERGE_RETRIES ]; then
+                echo "❌ PR merge failed after ${MAX_MERGE_RETRIES} retries - giving up"
+                return 1
+              fi
+
+              if echo "${MERGE_OUTPUT}" | grep -qi "base branch was modified\|not mergeable\|merge conflict"; then
+                echo "⚠️  Merge failed (attempt ${MERGE_RETRIES}/${MAX_MERGE_RETRIES}), likely a concurrent deploy race - rebasing onto latest main and retrying..."
+                git fetch origin main
+                git rebase origin/main
+                git push --force-with-lease origin "${BRANCH_NAME}"
+                sleep 3
+              else
+                echo "❌ PR merge failed with an unexpected error - not retrying"
+                return 1
+              fi
+            done
+
             echo "✅ Created and merged PR for ${CLUSTER_NAME} cluster, branch deleted"
           }
           
