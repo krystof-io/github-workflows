@@ -1,0 +1,207 @@
+# Reusable workflow for building and deploying Node MCP servers (streamable
+# HTTP transport, plain Kubernetes manifests — not Helm).
+# Location: github-workflows repo at .github/workflows/mcp-server-build.yml
+#
+# Distinct from java-app-build.yml on purpose, not by oversight: MCP servers
+# in this org are small Node apps with a SELF-CONTAINED Dockerfile at their
+# own repo root (no shared Dockerfile fetched from devops-templates), no
+# Maven/SonarQube/OpenAPI-registry pipeline, and their k8s manifests are
+# plain Deployments (image ref baked into deployment.yaml) rather than Helm
+# values files. Reuses flux-deploy.yml/validate-flux-deployment.yml with
+# manifest_kind: k8s-deployment (added to flux-deploy.yml alongside this
+# workflow) rather than forking that deploy logic a second time.
+
+name: MCP Server Build and Deploy
+
+on:
+  workflow_call:
+    inputs:
+      app_name:
+        required: true
+        type: string
+        description: 'Docker image name AND k8s Deployment name, e.g. "mcp-server-sonarqube" — validate-flux-deployment.yml matches on this.'
+      app_dir_name:
+        required: false
+        type: string
+        default: ''
+        description: 'Manifest directory name under cluster_path/target_namespace/, if it differs from app_name (e.g. mcp-server-sonarqube''s manifests live in .../mcp/sonarqube/, not .../mcp/mcp-server-sonarqube/). Defaults to app_name.'
+      target_clusters:
+        default: '[]'
+        type: string
+        description: 'JSON array of target cluster names (from config/clusters.yml in this repo) to deploy to on a push to main. Empty array = build only, no deploy (matches every MCP server''s current behavior before this workflow existed).'
+      target_namespace:
+        default: 'mcp'
+        type: string
+        description: 'k8s namespace for all MCP servers in this org.'
+      skip_kustomization_update:
+        default: true
+        type: boolean
+        description: 'MCP servers share one namespace kustomization (mcp/kustomization.yaml) with a hand-curated, directory-slash resources list (- sonarqube/) — default true so flux-deploy.yml never touches it. Set false only if a server''s manifests get their own dedicated kustomization list using flux-deploy.yml''s bare-name convention.'
+    secrets:
+      IMAGE_REGISTRY_USERNAME:
+        required: true
+      IMAGE_REGISTRY_PASSWORD:
+        required: true
+      CICD_TOKEN:
+        required: true
+      CICD_USER_EMAIL:
+        required: true
+      CICD_USER_NAME:
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: arc-runners-basic
+    outputs:
+      image_tag: ${{ steps.tag.outputs.tag }}
+      image_repo: ${{ steps.tag.outputs.image_repo }}
+      clusters_matrix: ${{ steps.parse.outputs.matrix }}
+      has_clusters: ${{ steps.parse.outputs.has_clusters }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 #v5
+
+      - name: Checkout workflow repo
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 #v5
+        with:
+          repository: krystof-io/github-workflows
+          path: workflow-config
+
+      - name: Parse target clusters
+        id: parse
+        run: |
+          cd workflow-config
+          CLUSTERS_CONFIG=$(cat config/clusters.yml | yq -o json)
+          TARGET_CLUSTERS='${{ inputs.target_clusters }}'
+          MATRIX=$(echo $TARGET_CLUSTERS | jq -c --argjson config "$CLUSTERS_CONFIG" '
+            map({
+              name: .,
+              gitops_repo: $config.clusters[.].gitops_repo,
+              cluster_path: $config.clusters[.].cluster_path,
+              cluster_url: $config.clusters[.].cluster_url
+            })
+          ')
+          echo "matrix={\"include\":$MATRIX}" >> $GITHUB_OUTPUT
+          HAS_CLUSTERS=$(echo $TARGET_CLUSTERS | jq 'length > 0')
+          echo "has_clusters=$HAS_CLUSTERS" >> $GITHUB_OUTPUT
+
+      - name: Generate image tag
+        id: tag
+        run: |
+          IMAGE_TAG=$(git rev-parse --short HEAD)
+          IMAGE_REPO="${{ vars.IMAGE_REGISTRY_HOST }}/krystof-io/${{ inputs.app_name }}"
+          echo "tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
+          echo "image_repo=$IMAGE_REPO" >> $GITHUB_OUTPUT
+          echo "Using image tag: $IMAGE_TAG"
+          echo "Image repo: $IMAGE_REPO"
+
+      - name: Login to internal private docker repo
+        uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef #v3.6.0
+        with:
+          registry: ${{ vars.IMAGE_REGISTRY_HOST }}
+          username: ${{ secrets.IMAGE_REGISTRY_USERNAME }}
+          password: ${{ secrets.IMAGE_REGISTRY_PASSWORD }}
+
+      - name: Build and push Docker image
+        run: |
+          IMAGE_TAG="${{ steps.tag.outputs.tag }}"
+          IMAGE_NAME="${{ steps.tag.outputs.image_repo }}:${IMAGE_TAG}"
+          LATEST_IMAGE="${{ steps.tag.outputs.image_repo }}:latest"
+
+          echo "Building image: ${IMAGE_NAME}"
+
+          echo "::group::Docker Build"
+          docker build \
+            --progress=plain \
+            -t "${IMAGE_NAME}" \
+            . 2>&1 | tee build.log
+          BUILD_EXIT_CODE=${PIPESTATUS[0]}
+          echo "::endgroup::"
+
+          if [ $BUILD_EXIT_CODE -ne 0 ]; then
+            echo "Docker build failed with exit code $BUILD_EXIT_CODE"
+            exit $BUILD_EXIT_CODE
+          fi
+
+          IMAGE_SIZE=$(docker images --format "table {{.Size}}" "${IMAGE_NAME}" | tail -1)
+
+          echo "::group::Docker Push"
+          docker push "${IMAGE_NAME}" 2>&1 | tee push.log
+          PUSH_EXIT_CODE=${PIPESTATUS[0]}
+
+          if [ $PUSH_EXIT_CODE -eq 0 ]; then
+            docker tag "${IMAGE_NAME}" "${LATEST_IMAGE}"
+            docker push "${LATEST_IMAGE}"
+          fi
+          echo "::endgroup::"
+
+          if [ $PUSH_EXIT_CODE -ne 0 ]; then
+            echo "Docker push failed with exit code $PUSH_EXIT_CODE"
+            exit $PUSH_EXIT_CODE
+          fi
+
+          echo "image_size=${IMAGE_SIZE}" >> $GITHUB_OUTPUT
+          echo "Successfully built and pushed:"
+          echo "  - ${IMAGE_NAME} (${IMAGE_SIZE})"
+          echo "  - ${LATEST_IMAGE}"
+        id: docker_build
+
+      - name: Build Summary
+        if: always()
+        run: |
+          echo "## 🚀 MCP Server Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Application**: \`${{ inputs.app_name }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Image Tag**: \`${{ steps.tag.outputs.tag }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Image Repo**: \`${{ steps.tag.outputs.image_repo }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Has Target Clusters**: ${{ steps.parse.outputs.has_clusters }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ job.status }}" == "success" ]; then
+            echo "✅ Build and push completed successfully" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ Build failed — check the logs above" >> $GITHUB_STEP_SUMMARY
+          fi
+
+  deploy:
+    name: deploy (${{ matrix.name }})
+    needs: [build]
+    if: ${{ github.ref == 'refs/heads/main' && needs.build.outputs.has_clusters == 'true' }}
+    strategy:
+      matrix: ${{ fromJson(needs.build.outputs.clusters_matrix) }}
+    uses: ./.github/workflows/flux-deploy.yml
+    with:
+      app_name: ${{ inputs.app_name }}
+      app_dir_name: ${{ inputs.app_dir_name }}
+      image_tag: ${{ needs.build.outputs.image_tag }}
+      image_repo: ${{ needs.build.outputs.image_repo }}
+      manifest_kind: 'k8s-deployment'
+      target_namespace: ${{ inputs.target_namespace }}
+      gitops_repo: ${{ matrix.gitops_repo }}
+      cluster_path: ${{ matrix.cluster_path }}
+      cluster_name: ${{ matrix.name }}
+      skip_kustomization_update: ${{ inputs.skip_kustomization_update }}
+    secrets:
+      CICD_TOKEN: ${{ secrets.CICD_TOKEN }}
+      CICD_USER_EMAIL: ${{ secrets.CICD_USER_EMAIL }}
+      CICD_USER_NAME: ${{ secrets.CICD_USER_NAME }}
+
+  validate-deployment:
+    name: validate-deployment (${{ matrix.name }})
+    needs: [build, deploy]
+    if: ${{ github.ref == 'refs/heads/main' && needs.build.outputs.has_clusters == 'true' }}
+    strategy:
+      matrix: ${{ fromJson(needs.build.outputs.clusters_matrix) }}
+    uses: ./.github/workflows/validate-flux-deployment.yml
+    with:
+      app_name: ${{ inputs.app_name }}
+      image_tag: ${{ needs.build.outputs.image_tag }}
+      target_namespace: ${{ inputs.target_namespace }}
+      cluster_name: ${{ matrix.name }}
+      validation_timeout: 300
+      cluster_url: ${{ matrix.cluster_url }}
+    secrets:
+      CLUSTER_CA_CERTIFICATE: ${{ secrets[format('K8S_CLUSTER_CA_CERT_FOR_{0}_CLUSTER', matrix.name)] }}
+      SERVICE_ACCOUNT_TOKEN: ${{ secrets[format('SERVICE_ACCOUNT_TOKEN_FOR_{0}_CLUSTER_CICD_K8S_ACCESS', matrix.name)] }}
