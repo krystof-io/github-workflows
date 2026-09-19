@@ -86,7 +86,8 @@ jobs:
               name: .,
               gitops_repo: $config.clusters[.].gitops_repo,
               cluster_path: $config.clusters[.].cluster_path,
-              cluster_url: $config.clusters[.].cluster_url
+              cluster_url: $config.clusters[.].cluster_url,
+              image_pull_registry_host: $config.clusters[.].image_pull_registry_host
             })
           ')
           echo "matrix={\"include\":$MATRIX}" >> $GITHUB_OUTPUT
@@ -97,6 +98,13 @@ jobs:
         id: tag
         run: |
           IMAGE_TAG=$(git rev-parse --short HEAD)
+          # This is the PUSH-side repo (vars.IMAGE_REGISTRY_HOST is only ever
+          # reachable from the private-cluster CI runners that push here).
+          # Deployed pods use each cluster's own image_pull_registry_host
+          # instead - see clusters.yml. Do not reuse this value for the
+          # deployed image ref; that was the root cause of a real incident
+          # (mcp-server-sonarqube ImagePullBackOff, kio-public-cluster
+          # f508d569 / fixed in 993dc56b).
           IMAGE_REPO="${{ vars.IMAGE_REGISTRY_HOST }}/krystof-io/${{ inputs.app_name }}"
           echo "tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
           echo "image_repo=$IMAGE_REPO" >> $GITHUB_OUTPUT
@@ -181,7 +189,10 @@ jobs:
       app_name: ${{ inputs.app_name }}
       app_dir_name: ${{ inputs.app_dir_name }}
       image_tag: ${{ needs.build.outputs.image_tag }}
-      image_repo: ${{ needs.build.outputs.image_repo }}
+      # PULL-side ref, deliberately NOT needs.build.outputs.image_repo (that's
+      # the push-side host — see the "Generate image tag" step's comment).
+      # matrix.image_pull_registry_host comes from clusters.yml per-cluster.
+      image_repo: ${{ format('{0}/krystof-io/{1}', matrix.image_pull_registry_host, inputs.app_name) }}
       manifest_kind: 'k8s-deployment'
       target_namespace: ${{ inputs.target_namespace }}
       gitops_repo: ${{ matrix.gitops_repo }}

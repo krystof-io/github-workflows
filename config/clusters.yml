@@ -11,12 +11,29 @@ clusters:
     cluster_path: 'k8s-manifests/components/apps/workloads'
     description: 'Private Infrastructure cluster'
     cluster_url: 'https://private-cluster.krystof.io:6443'
+    # Same registry as vars.IMAGE_REGISTRY_HOST (CI runners and this cluster
+    # are both on the private network) - only needed by manifest_kind:
+    # k8s-deployment callers, which bake the full image ref (registry host
+    # included) straight into the pod spec rather than a Helm values file's
+    # static .image.repository.
+    image_pull_registry_host: 'docker-private.private.krystof.io'
 
   public:
     gitops_repo: 'krystof-io/kio-public-cluster'
     cluster_path: 'k8s-manifests/components/apps/workloads'
     description: 'Public App cluster'
-    cluster_url: 'https://public-cluster.krystof.io:6443'    
+    cluster_url: 'https://public-cluster.krystof.io:6443'
+    # NOT the same host CI pushes to (vars.IMAGE_REGISTRY_HOST resolves to
+    # docker-private.private.krystof.io, reachable from the private-cluster
+    # CI runners that push the image). Pods on the PUBLIC cluster pull the
+    # same registry through a different DNS name; .private. does not resolve
+    # from here and yields ImagePullBackOff "no such host". Real incident:
+    # kio-public-cluster commit f508d569 shipped mcp-server-build.yml's
+    # first live run with the wrong host baked in from vars.IMAGE_REGISTRY_HOST,
+    # taking mcp-server-sonarqube down; fixed forward in 993dc56b and by
+    # adding this field so the workflow can never make that mistake again.
+    image_pull_registry_host: 'docker-private.privpub.krystof.io'
+
   
   # # App cluster - hosts production applications
   # app:
