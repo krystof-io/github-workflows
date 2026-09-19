@@ -146,7 +146,47 @@ jobs:
             --head "${BRANCH_NAME}"
 
           echo "Merging pull request..."
-          gh pr merge "${BRANCH_NAME}" --repo "${API_REGISTRY_REPO}" --squash --delete-branch
+          # Same race as flux-deploy.yml's deploy_pull_request(): concurrent
+          # publishes from different services can land PRs against
+          # api-registry's main close together, so a later PR's base can
+          # move out from under it between creation and merge. This step is
+          # a plain run: block (not a function used as an if-condition), so
+          # set -e above DOES correctly fail the job on an unguarded
+          # failure here - this isn't the silent-success bug fixed in
+          # flux-deploy.yml. But failing outright on a transient,
+          # retryable race just to have someone re-run the job by hand is
+          # wasted CI time, so retry the same way: capture the real exit
+          # code, rebase+retry on the known transient errors, fail loudly
+          # (uncaught by set -e, since we check $? explicitly and exit 1
+          # ourselves) on anything else.
+          MERGE_RETRIES=0
+          MAX_MERGE_RETRIES=5
+          while true; do
+            MERGE_OUTPUT=$(gh pr merge "${BRANCH_NAME}" --repo "${API_REGISTRY_REPO}" --squash --delete-branch 2>&1)
+            MERGE_EXIT=$?
+            echo "${MERGE_OUTPUT}"
+
+            if [ $MERGE_EXIT -eq 0 ]; then
+              break
+            fi
+
+            MERGE_RETRIES=$((MERGE_RETRIES + 1))
+            if [ $MERGE_RETRIES -ge $MAX_MERGE_RETRIES ]; then
+              echo "❌ PR merge failed after ${MAX_MERGE_RETRIES} retries - giving up"
+              exit 1
+            fi
+
+            if echo "${MERGE_OUTPUT}" | grep -qi "base branch was modified\|not mergeable\|merge conflict"; then
+              echo "⚠️  Merge failed (attempt ${MERGE_RETRIES}/${MAX_MERGE_RETRIES}), likely a concurrent publish race - rebasing onto latest main and retrying..."
+              git fetch origin main
+              git rebase origin/main
+              git push --force-with-lease origin "${BRANCH_NAME}"
+              sleep 3
+            else
+              echo "❌ PR merge failed with an unexpected error - not retrying"
+              exit 1
+            fi
+          done
 
           echo "published=true" >> $GITHUB_OUTPUT
           echo "spec_changed=true" >> $GITHUB_OUTPUT
