@@ -33,7 +33,7 @@ on:
       target_clusters:
         default: '[]'
         type: string
-        description: 'JSON array of target cluster names (from config/clusters.yml in this repo) to deploy to on a push to main. Empty array = build only, no deploy (matches every MCP server''s current behavior before this workflow existed).'
+        description: 'JSON array of target cluster names (from config/clusters.yml in this repo) to deploy to on a push to main OR a v* tag push. Empty array = build only, no deploy (matches every MCP server''s current behavior before this workflow existed).'
       target_namespace:
         default: 'mcp'
         type: string
@@ -198,7 +198,13 @@ jobs:
   deploy:
     name: deploy (${{ matrix.name }})
     needs: [build]
-    if: ${{ github.ref == 'refs/heads/main' && needs.build.outputs.has_clusters == 'true' }}
+    # main branch push (dev caller) OR a v* tag push (prod caller, e.g.
+    # promote.yml) - mirrors java-app-build.yml's branch-vs-tag split. Unlike
+    # Java apps, dev and prod MCP servers share one k8s namespace (mcp/) and
+    # differ by Deployment name/directory, not namespace - so there is no
+    # target_namespace branching here; the CALLER (build.yml vs promote.yml)
+    # is what supplies different app_name/app_dir_name for dev vs prod.
+    if: ${{ (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) && needs.build.outputs.has_clusters == 'true' }}
     strategy:
       matrix: ${{ fromJson(needs.build.outputs.clusters_matrix) }}
     uses: ./.github/workflows/flux-deploy.yml
@@ -227,7 +233,7 @@ jobs:
   validate-deployment:
     name: validate-deployment (${{ matrix.name }})
     needs: [build, deploy]
-    if: ${{ github.ref == 'refs/heads/main' && needs.build.outputs.has_clusters == 'true' }}
+    if: ${{ (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) && needs.build.outputs.has_clusters == 'true' }}
     strategy:
       matrix: ${{ fromJson(needs.build.outputs.clusters_matrix) }}
     uses: ./.github/workflows/validate-flux-deployment.yml
