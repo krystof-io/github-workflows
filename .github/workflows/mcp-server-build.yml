@@ -19,7 +19,12 @@ on:
       app_name:
         required: true
         type: string
-        description: 'Docker image name AND k8s Deployment name, e.g. "mcp-server-sonarqube" — validate-flux-deployment.yml matches on this.'
+        description: 'k8s Deployment name (used by validate-flux-deployment.yml to find the pod, and in GitOps commit/PR text) — e.g. "mcp-server-sonarqube" or "mcp-server-inventory-tracker-dev". Not necessarily the Docker image name; see image_name.'
+      image_name:
+        required: false
+        type: string
+        default: ''
+        description: 'Docker image name, if it differs from app_name. Defaults to app_name (sonarqube''s case: image and Deployment share one name). Needed when a per-env Deployment name (mcp-server-inventory-tracker-dev) shares one bare image across envs (mcp-server-inventory-tracker, no -dev) — see kio-public-cluster mcp/inventory-tracker-dev/deployment.yaml.'
       app_dir_name:
         required: false
         type: string
@@ -62,6 +67,7 @@ jobs:
     runs-on: arc-runners-javadev
     outputs:
       image_tag: ${{ steps.tag.outputs.tag }}
+      image_name: ${{ steps.tag.outputs.image_name }}
       image_repo: ${{ steps.tag.outputs.image_repo }}
       clusters_matrix: ${{ steps.parse.outputs.matrix }}
       has_clusters: ${{ steps.parse.outputs.has_clusters }}
@@ -98,6 +104,14 @@ jobs:
         id: tag
         run: |
           IMAGE_TAG=$(git rev-parse --short HEAD)
+          # Docker image name defaults to app_name (sonarqube: image and
+          # Deployment share one name); set explicitly when they diverge
+          # (inventory-tracker-dev's Deployment is per-env, but the image is
+          # bare/shared across envs — see image_name's description).
+          IMAGE_NAME_INPUT="${{ inputs.image_name }}"
+          if [ -z "${IMAGE_NAME_INPUT}" ]; then
+            IMAGE_NAME_INPUT="${{ inputs.app_name }}"
+          fi
           # This is the PUSH-side repo (vars.IMAGE_REGISTRY_HOST is only ever
           # reachable from the private-cluster CI runners that push here).
           # Deployed pods use each cluster's own image_pull_registry_host
@@ -105,10 +119,12 @@ jobs:
           # deployed image ref; that was the root cause of a real incident
           # (mcp-server-sonarqube ImagePullBackOff, kio-public-cluster
           # f508d569 / fixed in 993dc56b).
-          IMAGE_REPO="${{ vars.IMAGE_REGISTRY_HOST }}/krystof-io/${{ inputs.app_name }}"
+          IMAGE_REPO="${{ vars.IMAGE_REGISTRY_HOST }}/krystof-io/${IMAGE_NAME_INPUT}"
           echo "tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
+          echo "image_name=$IMAGE_NAME_INPUT" >> $GITHUB_OUTPUT
           echo "image_repo=$IMAGE_REPO" >> $GITHUB_OUTPUT
           echo "Using image tag: $IMAGE_TAG"
+          echo "Image name: $IMAGE_NAME_INPUT"
           echo "Image repo: $IMAGE_REPO"
 
       - name: Login to internal private docker repo
@@ -167,7 +183,8 @@ jobs:
         run: |
           echo "## 🚀 MCP Server Build Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- **Application**: \`${{ inputs.app_name }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Deployment**: \`${{ inputs.app_name }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Image**: \`${{ steps.tag.outputs.image_name }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- **Image Tag**: \`${{ steps.tag.outputs.tag }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- **Image Repo**: \`${{ steps.tag.outputs.image_repo }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- **Has Target Clusters**: ${{ steps.parse.outputs.has_clusters }}" >> $GITHUB_STEP_SUMMARY
@@ -192,7 +209,10 @@ jobs:
       # PULL-side ref, deliberately NOT needs.build.outputs.image_repo (that's
       # the push-side host — see the "Generate image tag" step's comment).
       # matrix.image_pull_registry_host comes from clusters.yml per-cluster.
-      image_repo: ${{ format('{0}/krystof-io/{1}', matrix.image_pull_registry_host, inputs.app_name) }}
+      # needs.build.outputs.image_name, not inputs.app_name: the Docker image
+      # name can differ from the k8s Deployment name (app_name) — see
+      # image_name's description.
+      image_repo: ${{ format('{0}/krystof-io/{1}', matrix.image_pull_registry_host, needs.build.outputs.image_name) }}
       manifest_kind: 'k8s-deployment'
       target_namespace: ${{ inputs.target_namespace }}
       gitops_repo: ${{ matrix.gitops_repo }}
