@@ -281,8 +281,23 @@ jobs:
             DEPLOYMENT_IMAGE=$(kubectl get deployment ${DEPLOYMENT_NAME} -n ${NAMESPACE} --context=${CLUSTER_NAME} -o jsonpath='{.spec.template.spec.containers[0].image}')
             echo "📋 Deployment spec image: ${DEPLOYMENT_IMAGE}"
             
-            # More importantly, check what's actually running in pods
-            RUNNING_PODS=$(find_pods "${APP_NAME}" --field-selector=status.phase=Running -o jsonpath='{.items[*].spec.containers[0].image}')
+            # More importantly, check what's actually running in pods.
+            # `|| true` is load-bearing under `set -e`: find_pods legitimately
+            # returns 1 (no selector matched) during the normal, real window
+            # of a single-replica rolling update where the old pod has
+            # already left Running and the new one hasn't reached Running
+            # yet -- the existing `if [[ -n "${RUNNING_PODS}" ]]` below
+            # already handles an empty result gracefully, but set -e was
+            # killing the whole script on this bare assignment BEFORE that
+            # handler ever ran. Root-caused against a real failed
+            # mcp-comfy-workflows deploy: the script died silently (exit 1,
+            # no "retries failed" message, no exception) at the exact
+            # moment a rolling single-replica pod swap left zero Running
+            # pods for an instant -- confirmed via the pod's own
+            # status.startTime landing 2 seconds before the job's recorded
+            # death. This is a routine, expected state for any
+            # single-replica app's rolling deploy, not a real failure.
+            RUNNING_PODS=$(find_pods "${APP_NAME}" --field-selector=status.phase=Running -o jsonpath='{.items[*].spec.containers[0].image}') || true
             
             if [[ -n "${RUNNING_PODS}" ]]; then
               echo "📋 Running pod images: ${RUNNING_PODS}"
