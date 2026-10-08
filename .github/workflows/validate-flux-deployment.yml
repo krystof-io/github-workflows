@@ -152,6 +152,36 @@ jobs:
           echo "  Cluster: ${CLUSTER_NAME}"
           echo "  Timeout: ${TIMEOUT_SECONDS}s"
           
+          # Try label selectors in order and return the FIRST one that
+          # actually matches pods. `kubectl get pods -l <no-match>` exits 0
+          # with empty output -- a bare `cmd1 2>/dev/null || cmd2 || cmd3`
+          # chain relies on EXIT CODE to decide whether to try the next
+          # selector, so it stops at cmd1's zero exit even when cmd1 found
+          # nothing, and never reaches cmd2/cmd3. This checks OUTPUT
+          # emptiness instead, so every selector genuinely gets tried.
+          #
+          # Root-caused against a real false failure: mcp-comfy-workflows
+          # (and mcp-server-sonarqube, same pattern) labels pods with ONLY
+          # app.kubernetes.io/name, no app.kubernetes.io/instance -- a
+          # completely valid label scheme. The old chain tried
+          # app.kubernetes.io/instance first, got zero matches but exit 0,
+          # and stopped there -- so it reported "no running pods found" on
+          # every single run, forever, for any app using this label scheme,
+          # even with the correct pods healthy and Ready the whole time.
+          find_pods() {
+            local app_name="$1"; shift
+            local extra_args=("$@")
+            local output
+            for selector in "app.kubernetes.io/instance=${app_name}" "app.kubernetes.io/name=${app_name}" "app=${app_name}"; do
+              output=$(kubectl get pods -n "${NAMESPACE}" --context="${CLUSTER_NAME}" -l "${selector}" "${extra_args[@]}" 2>/dev/null)
+              if [[ -n "${output}" ]]; then
+                echo "${output}"
+                return 0
+              fi
+            done
+            return 1
+          }
+          
           # Find deployments related to this app (flexible matching)
           echo "🔍 Finding deployments for app: ${APP_NAME}"
           
@@ -221,12 +251,8 @@ jobs:
           else
             echo "❌ Deployment rollout failed or timed out"
             kubectl get deployment ${DEPLOYMENT_NAME} -n ${NAMESPACE} --context=${CLUSTER_NAME} -o wide
-            # Try multiple label selectors for pods
             echo "📋 Pod status (trying multiple label selectors):"
-            kubectl get pods -n ${NAMESPACE} -l app=${APP_NAME} --context=${CLUSTER_NAME} 2>/dev/null || \
-            kubectl get pods -n ${NAMESPACE} -l app.kubernetes.io/name=${APP_NAME} --context=${CLUSTER_NAME} 2>/dev/null || \
-            kubectl get pods -n ${NAMESPACE} -l app.kubernetes.io/instance=${APP_NAME} --context=${CLUSTER_NAME} 2>/dev/null || \
-            echo "  Could not find pods with standard labels"
+            find_pods "${APP_NAME}" || echo "  Could not find pods with standard labels"
             exit 1
           fi
           
@@ -242,18 +268,7 @@ jobs:
             echo "📋 Deployment spec image: ${DEPLOYMENT_IMAGE}"
             
             # More importantly, check what's actually running in pods
-            RUNNING_PODS=$(kubectl get pods -n ${NAMESPACE} --context=${CLUSTER_NAME} \
-              --field-selector=status.phase=Running \
-              -l app.kubernetes.io/instance=${APP_NAME} \
-              -o jsonpath='{.items[*].spec.containers[0].image}' 2>/dev/null || \
-              kubectl get pods -n ${NAMESPACE} --context=${CLUSTER_NAME} \
-              --field-selector=status.phase=Running \
-              -l app.kubernetes.io/name=${APP_NAME} \
-              -o jsonpath='{.items[*].spec.containers[0].image}' 2>/dev/null || \
-              kubectl get pods -n ${NAMESPACE} --context=${CLUSTER_NAME} \
-              --field-selector=status.phase=Running \
-              -l app=${APP_NAME} \
-              -o jsonpath='{.items[*].spec.containers[0].image}' 2>/dev/null || echo "")
+            RUNNING_PODS=$(find_pods "${APP_NAME}" --field-selector=status.phase=Running -o jsonpath='{.items[*].spec.containers[0].image}')
             
             if [[ -n "${RUNNING_PODS}" ]]; then
               echo "📋 Running pod images: ${RUNNING_PODS}"
@@ -294,12 +309,7 @@ jobs:
             echo "Running pod images: ${RUNNING_PODS}"
             echo ""
             echo "📊 Current pod status:"
-            kubectl get pods -n ${NAMESPACE} --context=${CLUSTER_NAME} \
-              -l app.kubernetes.io/instance=${APP_NAME} -o wide 2>/dev/null || \
-            kubectl get pods -n ${NAMESPACE} --context=${CLUSTER_NAME} \
-              -l app.kubernetes.io/name=${APP_NAME} -o wide 2>/dev/null || \
-            kubectl get pods -n ${NAMESPACE} --context=${CLUSTER_NAME} \
-              -l app=${APP_NAME} -o wide 2>/dev/null || echo "No pods found"
+            find_pods "${APP_NAME}" -o wide || echo "No pods found"
             echo ""
             echo "This could indicate:"
             echo "  - Flux reconciliation is delayed"
@@ -314,10 +324,7 @@ jobs:
           echo "📊 Final deployment status:"
           kubectl get deployment ${DEPLOYMENT_NAME} -n ${NAMESPACE} --context=${CLUSTER_NAME} -o wide
           echo "📋 Pod status:"
-          kubectl get pods -n ${NAMESPACE} -l app=${APP_NAME} --context=${CLUSTER_NAME} -o wide 2>/dev/null || \
-          kubectl get pods -n ${NAMESPACE} -l app.kubernetes.io/name=${APP_NAME} --context=${CLUSTER_NAME} -o wide 2>/dev/null || \
-          kubectl get pods -n ${NAMESPACE} -l app.kubernetes.io/instance=${APP_NAME} --context=${CLUSTER_NAME} -o wide 2>/dev/null || \
-          echo "  Could not find pods with standard labels"
+          find_pods "${APP_NAME}" -o wide || echo "  Could not find pods with standard labels"
 
           echo "🎉 ${APP_NAME} ${NAMESPACE} deployment validation completed successfully!"
 
