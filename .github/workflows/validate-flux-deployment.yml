@@ -260,7 +260,21 @@ jobs:
           echo "🏷️  Verifying deployed image tag in running pods..."
           IMAGE_VERIFIED=false
           RETRY_COUNT=0
-          MAX_RETRIES=30  # 5 minutes with 10s intervals
+          RETRY_INTERVAL_SECONDS=10
+          # Derive from the caller's own TIMEOUT_SECONDS input instead of a
+          # hardcoded value -- this loop used to ignore TIMEOUT_SECONDS
+          # entirely (fixed 30 retries * 10s = 300s no matter what a caller
+          # passed), so validation_timeout had zero effect on the one loop
+          # that actually failed in practice. Root-caused against a real
+          # mcp-comfy-workflows deploy: Flux took ~130s just to flip the
+          # Deployment spec to the new tag, leaving too little of the fixed
+          # 300s budget for the subsequent pod-replacement wait. The earlier
+          # `kubectl rollout status` call above already honors
+          # TIMEOUT_SECONDS correctly; this loop now does too.
+          MAX_RETRIES=$(( TIMEOUT_SECONDS / RETRY_INTERVAL_SECONDS ))
+          if [[ ${MAX_RETRIES} -lt 1 ]]; then
+            MAX_RETRIES=1
+          fi
           
           while [[ ${RETRY_COUNT} -lt ${MAX_RETRIES} && "${IMAGE_VERIFIED}" == "false" ]]; do
             # Check deployment spec first
@@ -293,12 +307,12 @@ jobs:
                 else
                   echo "⏳ Pods still rolling out with new image (${RETRY_COUNT}/${MAX_RETRIES}). Waiting for pod replacement..."
                 fi
-                sleep 10
+                sleep ${RETRY_INTERVAL_SECONDS}
               fi
             else
               RETRY_COUNT=$((RETRY_COUNT + 1))
               echo "⏳ No running pods found yet (${RETRY_COUNT}/${MAX_RETRIES}). Waiting for deployment rollout..."
-              sleep 10
+              sleep ${RETRY_INTERVAL_SECONDS}
             fi
           done
           
